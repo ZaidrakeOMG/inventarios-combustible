@@ -1,0 +1,353 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: Inter, Arial, sans-serif;
+  background: linear-gradient(135deg, #eef4ff 0%, #f8fafc 45%, #e8f7ef 100%);
+  color: #172033;
+}
+
+.app {
+  width: min(1560px, calc(100% - 28px));
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: center;
+  background: rgba(255, 255, 255, .82);
+  border: 1px solid rgba(148, 163, 184, .35);
+  box-shadow: 0 22px 60px rgba(15, 23, 42, .12);
+  border-radius: 28px;
+  padding: 24px;
+  margin-bottom: 22px;
+  backdrop-filter: blur(12px);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  font-weight: 800;
+  letter-spacing: .12em;
+  color: #0f766e;
+  font-size: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 46px);
+  line-height: 1;
+  color: #0f172a;
+}
+
+.subtitle {
+  margin: 10px 0 0;
+  color: #64748b;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.fecha-texto {
+  font-weight: 900;
+  color: #1e3a8a;
+  background: #dbeafe;
+  padding: 11px 14px;
+  border-radius: 14px;
+}
+
+input,
+button {
+  font: inherit;
+}
+
+input {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  border-radius: 14px;
+  padding: 11px 12px;
+  outline: none;
+  min-width: 110px;
+}
+
+input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, .12);
+}
+
+button {
+  border: none;
+  border-radius: 14px;
+  padding: 11px 16px;
+  font-weight: 800;
+  cursor: pointer;
+  background: #0f172a;
+  color: #fff;
+  box-shadow: 0 12px 22px rgba(15, 23, 42, .18);
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+.station-card {
+  background: rgba(255, 255, 255, .92);
+  border: 1px solid rgba(148, 163, 184, .35);
+  border-radius: 24px;
+  overflow: hidden;
+  box-shadow: 0 16px 45px rgba(15, 23, 42, .1);
+  margin-bottom: 18px;
+}
+
+.station-title {
+  padding: 16px 18px;
+  background: linear-gradient(135deg, #0f2a0f, #8a5f1e);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: .03em;
+}
+
+.station-title.ary-1 {
+  background: linear-gradient(135deg, #159644, #22c55e);
+}
+
+.station-title.ary-2 {
+  background: linear-gradient(135deg, #991b1b, #ef4444);
+}
+
+.station-title.ary-3 {
+  background: linear-gradient(135deg, #7e22ce, #c084fc);
+}
+
+.station-title.ary-4 {
+  background: linear-gradient(135deg, #c2410c, #fb923c);
+}
+
+.station-title.ary-5 {
+  background: linear-gradient(135deg, #1d4ed8, #60a5fa);
+}
+
+.station-title.ary-6 {
+  background: linear-gradient(135deg, #ca8a04, #fde047);
+  color: #1f2937;
+}
+
+.station-title.apache {
+  background: linear-gradient(135deg, #701a35, #be123c);
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 1180px;
+}
+
+th {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 12px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+td {
+  padding: 10px;
+  border-bottom: 1px solid #edf2f7;
+  vertical-align: top;
+}
+
+.producto {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-weight: 900;
+  color: #fff;
+  min-width: 96px;
+  justify-content: center;
+  background: linear-gradient(135deg, #64748b, #334155);
+}
+
+.producto.MAGNA {
+  background: linear-gradient(135deg, #16a34a, #15803d);
+}
+
+.producto.PREMIUM {
+  background: linear-gradient(135deg, #dc2626, #991b1b);
+}
+
+.producto.DIESEL {
+  background: linear-gradient(135deg, #111827, #475569);
+}
+
+.num {
+  width: 130px;
+}
+
+.calculado {
+  background: #f8fafc;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.subbox {
+  min-width: 240px;
+}
+
+.subtotal {
+  display: grid;
+  grid-template-columns: 1fr 44px;
+  gap: 8px;
+  align-items: center;
+}
+
+.subtotal input {
+  width: 100%;
+  font-weight: 900;
+  background: linear-gradient(135deg, #f8fafc, #eef4ff);
+  border: 1px solid #dbeafe;
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.subbox-hint {
+  display: block;
+  margin-top: 4px;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.1;
+  color: #64748b;
+}
+
+.add {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  font-size: 22px;
+  line-height: 1;
+}
+
+.subitems {
+  display: none;
+  margin-top: 10px;
+  padding: 12px;
+  border-radius: 18px;
+  background: #ffffff;
+  border: 1px solid #dbeafe;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, .14);
+}
+
+.subitems.open {
+  display: grid;
+  gap: 10px;
+}
+
+.subitem {
+  display: grid;
+  grid-template-columns: 42px 1fr 38px;
+  gap: 8px;
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  padding: 8px;
+  border-radius: 14px;
+}
+
+.subitem span {
+  height: 38px;
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+  color: #1e3a8a;
+  font-size: 13px;
+  background: #dbeafe;
+  border-radius: 12px;
+}
+
+.subitem input {
+  width: 100%;
+  min-width: 90px;
+  border-radius: 12px;
+  padding: 9px 10px;
+  font-weight: 800;
+}
+
+.subitem button {
+  height: 38px;
+  width: 38px;
+  padding: 0;
+  background: linear-gradient(135deg, #ef4444, #b91c1c);
+  border-radius: 12px;
+  font-size: 16px;
+  box-shadow: none;
+}
+
+.subitem-hint {
+  grid-column: 2 / 4;
+  font-size: 10px;
+  line-height: 1.2;
+  color: #64748b;
+  margin-top: -2px;
+}
+
+#toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  background: #0f172a;
+  color: #fff;
+  padding: 14px 16px;
+  border-radius: 16px;
+  opacity: 0;
+  transform: translateY(12px);
+  pointer-events: none;
+  transition: .25s ease;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, .25);
+}
+
+#toast.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (max-width: 900px) {
+  .hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .subbox {
+    min-width: 220px;
+  }
+
+  .subitem {
+    grid-template-columns: 38px 1fr 34px;
+  }
+}
+
+
