@@ -8,31 +8,33 @@ body {
   font-family: Inter, Arial, sans-serif;
   background: linear-gradient(135deg, #eef4ff 0%, #f8fafc 45%, #e8f7ef 100%);
   color: #172033;
+  font-weight: 400;
 }
 
 .app {
-  width: min(1560px, calc(100% - 28px));
+  width: min(1500px, calc(100% - 28px));
   margin: 0 auto;
-  padding: 24px 0 40px;
+  padding: 20px 0 34px;
 }
 
 .hero {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  gap: 20px;
   align-items: center;
   background: rgba(255, 255, 255, .82);
   border: 1px solid rgba(148, 163, 184, .35);
-  box-shadow: 0 22px 60px rgba(15, 23, 42, .12);
-  border-radius: 28px;
-  padding: 24px;
-  margin-bottom: 22px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, .11);
+  border-radius: 24px;
+  padding: 20px;
+  margin-bottom: 18px;
   backdrop-filter: blur(12px);
+  font-weight: 400;
 }
 
 .eyebrow {
   margin: 0 0 8px;
-  font-weight: 800;
+  font-weight: 400;
   letter-spacing: .12em;
   color: #0f766e;
   font-size: 12px;
@@ -40,14 +42,16 @@ body {
 
 h1 {
   margin: 0;
-  font-size: clamp(28px, 4vw, 46px);
+  font-size: clamp(28px, 4vw, 44px);
   line-height: 1;
   color: #0f172a;
+  font-weight: 400;
 }
 
 .subtitle {
   margin: 10px 0 0;
   color: #64748b;
+  font-weight: 400;
 }
 
 .actions {
@@ -59,25 +63,27 @@ h1 {
 }
 
 .fecha-texto {
-  font-weight: 900;
+  font-weight: 400;
   color: #1e3a8a;
   background: #dbeafe;
-  padding: 11px 14px;
-  border-radius: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
 }
 
 input,
 button {
   font: inherit;
+  font-weight: 400;
 }
 
 input {
   border: 1px solid #cbd5e1;
   background: #fff;
-  border-radius: 14px;
-  padding: 11px 12px;
+  border-radius: 12px;
+  padding: 9px 10px;
   outline: none;
-  min-width: 110px;
+  min-width: 90px;
+  font-weight: 400;
 }
 
 input:focus {
@@ -87,13 +93,13 @@ input:focus {
 
 button {
   border: none;
-  border-radius: 14px;
-  padding: 11px 16px;
-  font-weight: 800;
+  border-radius: 12px;
+  padding: 10px 15px;
   cursor: pointer;
   background: #0f172a;
   color: #fff;
   box-shadow: 0 12px 22px rgba(15, 23, 42, .18);
+  font-weight: 400;
 }
 
 button:hover {
@@ -101,20 +107,21 @@ button:hover {
 }
 
 .station-card {
+  width: 88%;
+  margin: 0 auto 14px;
   background: rgba(255, 255, 255, .92);
   border: 1px solid rgba(148, 163, 184, .35);
-  border-radius: 24px;
+  border-radius: 18px;
   overflow: hidden;
   box-shadow: 0 16px 45px rgba(15, 23, 42, .1);
-  margin-bottom: 18px;
 }
 
 .station-title {
-  padding: 16px 18px;
+  padding: 12px 16px;
   background: linear-gradient(135deg, #0f2a0f, #8a5f1e);
   color: #fff;
   font-size: 18px;
-  font-weight: 900;
+  font-weight: 400;
   letter-spacing: .03em;
 }
 
@@ -148,13 +155,18 @@ button:hover {
 }
 
 .table-wrap {
+  width: 100%;
   overflow-x: auto;
+  display: flex;
+  justify-content: center;
 }
 
 table {
   width: 100%;
+  max-width: 1200px;
+  min-width: 980px;
+  margin: 0 auto;
   border-collapse: collapse;
-  min-width: 1180px;
 }
 
 th {
@@ -162,28 +174,32 @@ th {
   color: #475569;
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: .06em;
-  padding: 12px 10px;
+  letter-spacing: .04em;
+  padding: 9px 6px;
   border-bottom: 1px solid #e2e8f0;
-  text-align: left;
+  text-align: center;
+  font-weight: 400;
 }
 
 td {
-  padding: 10px;
+  padding: 8px 6px;
   border-bottom: 1px solid #edf2f7;
-  vertical-align: top;
+  vertical-align: middle;
+  text-align: center;
+  font-weight: 400;
 }
 
 .producto {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 8px 12px;
-  font-weight: 900;
+  padding: 7px 11px;
+  font-weight: 400;
   color: #fff;
-  min-width: 96px;
+  min-width: 88px;
   justify-content: center;
   background: linear-gradient(135deg, #64748b, #334155);
+  font-size: 12px;
 }
 
 .producto.MAGNA {
@@ -199,59 +215,47 @@ td {
 }
 
 .num {
-  width: 130px;
+  width: 104px;
+  text-align: center;
+  font-weight: 400;
 }
 
 .calculado {
   background: #f8fafc;
-  font-weight: 900;
+  font-weight: 400;
   color: #0f172a;
 }
 
 .subbox {
-  min-width: 240px;
+  min-width: 165px;
 }
 
 .subtotal {
   display: grid;
-  grid-template-columns: 1fr 44px;
-  gap: 8px;
+  grid-template-columns: 1fr;
+  gap: 5px;
   align-items: center;
 }
 
 .subtotal input {
   width: 100%;
-  font-weight: 900;
+  font-weight: 400;
   background: linear-gradient(135deg, #f8fafc, #eef4ff);
   border: 1px solid #dbeafe;
   color: #0f172a;
-  cursor: pointer;
 }
 
-.subbox-hint {
-  display: block;
-  margin-top: 4px;
+.captura-sub {
+  width: 100%;
+  cursor: text;
   text-align: center;
-  font-size: 10px;
-  line-height: 1.1;
-  color: #64748b;
-}
-
-.add {
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 14px;
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  font-size: 22px;
-  line-height: 1;
 }
 
 .subitems {
   display: none;
-  margin-top: 10px;
-  padding: 12px;
-  border-radius: 18px;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 14px;
   background: #ffffff;
   border: 1px solid #dbeafe;
   box-shadow: 0 16px 38px rgba(15, 23, 42, .14);
@@ -259,55 +263,50 @@ td {
 
 .subitems.open {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .subitem {
   display: grid;
-  grid-template-columns: 42px 1fr 38px;
-  gap: 8px;
+  grid-template-columns: 38px 1fr 34px;
+  gap: 6px;
   align-items: center;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  padding: 8px;
-  border-radius: 14px;
+  padding: 7px;
+  border-radius: 12px;
 }
 
 .subitem span {
-  height: 38px;
+  height: 34px;
   display: grid;
   place-items: center;
-  font-weight: 900;
+  font-weight: 400;
   color: #1e3a8a;
-  font-size: 13px;
+  font-size: 12px;
   background: #dbeafe;
-  border-radius: 12px;
+  border-radius: 10px;
 }
 
 .subitem input {
   width: 100%;
-  min-width: 90px;
-  border-radius: 12px;
-  padding: 9px 10px;
-  font-weight: 800;
+  min-width: 82px;
+  border-radius: 10px;
+  padding: 8px 9px;
+  font-weight: 400;
 }
 
 .subitem button {
-  height: 38px;
-  width: 38px;
+  height: 34px;
+  width: 34px;
   padding: 0;
+  border: 0;
   background: linear-gradient(135deg, #ef4444, #b91c1c);
-  border-radius: 12px;
-  font-size: 16px;
+  color: #fff;
+  border-radius: 10px;
+  font-size: 15px;
   box-shadow: none;
-}
-
-.subitem-hint {
-  grid-column: 2 / 4;
-  font-size: 10px;
-  line-height: 1.2;
-  color: #64748b;
-  margin-top: -2px;
+  cursor: pointer;
 }
 
 #toast {
@@ -323,11 +322,104 @@ td {
   pointer-events: none;
   transition: .25s ease;
   box-shadow: 0 16px 40px rgba(15, 23, 42, .25);
+  font-weight: 400;
 }
 
 #toast.show {
   opacity: 1;
   transform: translateY(0);
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .app {
+    width: 100%;
+    min-height: 100vh;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .hero {
+    box-shadow: none;
+    border-radius: 0;
+    margin-bottom: 8px;
+    padding: 10px;
+  }
+
+  .station-card {
+    width: 88%;
+    margin: 0 auto 8px;
+    box-shadow: none;
+    border-radius: 4px;
+    page-break-inside: avoid;
+  }
+
+  .station-title {
+    padding: 7px 10px;
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  .table-wrap {
+    display: flex;
+    justify-content: center;
+    overflow: visible;
+  }
+
+  table {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  th {
+    font-size: 8px;
+    padding: 4px 3px;
+    letter-spacing: 0;
+    text-align: center;
+    font-weight: 400;
+  }
+
+  td {
+    font-size: 11px;
+    padding: 4px 3px;
+    text-align: center;
+    font-weight: 400;
+  }
+
+  input {
+    border-radius: 4px;
+    padding: 4px 5px;
+    min-width: 0;
+    font-weight: 400;
+  }
+
+  .num {
+    width: 88px;
+    font-weight: 400;
+  }
+
+  .subbox {
+    min-width: 116px;
+  }
+
+  .producto {
+    min-width: 62px;
+    padding: 3px 6px;
+    font-size: 8px;
+    font-weight: 400;
+  }
+
+  .calculado {
+    font-weight: 400;
+  }
 }
 
 @media (max-width: 900px) {
@@ -341,13 +433,61 @@ td {
     justify-content: flex-start;
   }
 
+  .station-card {
+    width: 100%;
+  }
+
+  table {
+    min-width: 960px;
+  }
+
   .subbox {
-    min-width: 220px;
+    min-width: 165px;
   }
 
   .subitem {
-    grid-template-columns: 38px 1fr 34px;
+    grid-template-columns: 36px 1fr 32px;
+  }
+
+  .subitem span {
+    font-size: 12px;
+  }
+
+  .subitem button {
+    height: 32px;
+    width: 32px;
   }
 }
 
 
+#btnWhatsApp {
+  background: #16a34a;
+  color: #ffffff;
+}
+
+#btnWhatsApp:hover {
+  transform: translateY(-1px);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.logo-ary {
+  width: 95px;
+  height: 70px;
+  object-fit: contain;
+  display: block;
+}
+
+@media (max-width: 900px) {
+  .brand {
+    align-items: flex-start;
+  }
+
+  .logo-ary {
+    width: 80px;
+    height: 60px;
+  }
+}

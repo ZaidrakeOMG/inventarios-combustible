@@ -1,6 +1,9 @@
 const state = {
   registros: [],
-  subboxAbierto: ''
+  subboxAbierto: '',
+  originales: new Map(),
+  cargando: false,
+  guardando: false
 }
 
 const $ = selector => document.querySelector(selector)
@@ -397,6 +400,22 @@ function crearMenuLateral() {
 
 crearMenuLateral()
 
+function ocultarBotonCargar() {
+  if (document.querySelector('#estiloOcultarBotonCargar')) return
+
+  const css = document.createElement('style')
+  css.id = 'estiloOcultarBotonCargar'
+  css.textContent = `
+    #btnCargar {
+      display: none !important;
+    }
+  `
+
+  document.head.appendChild(css)
+}
+
+ocultarBotonCargar()
+
 
 function crearEstilosPrecioLtsAlLado() {
   if (document.querySelector('#estilosPrecioLtsAlLado')) return
@@ -406,11 +425,11 @@ function crearEstilosPrecioLtsAlLado() {
   css.textContent = `
     .subbox[data-tipo="precios"] .subitem-precio-lts {
       display: grid !important;
-      grid-template-columns: 34px 82px 145px 30px !important;
+      grid-template-columns: 34px max-content max-content 30px !important;
       align-items: center;
       gap: 6px;
       width: max-content;
-      min-width: 315px;
+      min-width: 0;
       position: relative;
     }
 
@@ -419,8 +438,10 @@ function crearEstilosPrecioLtsAlLado() {
     }
 
     .subbox[data-tipo="precios"] .subitem-precio-lts input {
-      width: 100%;
-      min-width: 0;
+      width: auto;
+      min-width: 8ch;
+      max-width: 22ch;
+      text-align: center;
     }
 
     .subbox[data-tipo="precios"] .subitem-precio-lts input[data-sub-input="importe"] {
@@ -429,7 +450,7 @@ function crearEstilosPrecioLtsAlLado() {
 
     .subbox[data-tipo="precios"] .subitem-precio-lts input[data-sub-input="sub_litros"] {
       grid-column: 3;
-      min-width: 145px;
+      min-width: 8ch;
       text-align: center;
     }
 
@@ -451,13 +472,13 @@ function crearEstilosPrecioLtsAlLado() {
 
     @media (max-width: 760px) {
       .subbox[data-tipo="precios"] .subitem-precio-lts {
-        grid-template-columns: 30px 70px 125px 28px !important;
+        grid-template-columns: 30px max-content max-content 28px !important;
         gap: 4px;
-        min-width: 265px;
+        min-width: 0;
       }
 
       .subbox[data-tipo="precios"] .subitem-precio-lts input[data-sub-input="sub_litros"] {
-        min-width: 125px;
+        min-width: 8ch;
       }
     }
   `
@@ -467,6 +488,134 @@ function crearEstilosPrecioLtsAlLado() {
 
 crearEstilosPrecioLtsAlLado()
 
+function crearEstilosDocumentosCompra() {
+  if (document.querySelector('#estilosDocumentosCompra')) return
+
+  const css = document.createElement('style')
+  css.id = 'estilosDocumentosCompra'
+  css.textContent = `
+    th.th-documentos-compra {
+      width: 92px;
+      min-width: 92px;
+      max-width: 92px;
+      white-space: normal;
+      line-height: 1.1;
+      text-align: center;
+      font-size: 11px;
+    }
+
+    td.td-documentos-compra {
+      width: 92px;
+      min-width: 92px;
+      max-width: 92px;
+      text-align: center;
+      vertical-align: middle;
+    }
+
+    .documentos-compra-wrap {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .documentos-compra-check {
+      appearance: none;
+      -webkit-appearance: none;
+      width: 18px;
+      height: 18px;
+      min-width: 18px;
+      max-width: 18px;
+      margin: 0 auto;
+      padding: 0;
+      border: 1.5px solid #94a3b8;
+      border-radius: 4px;
+      background: #ffffff;
+      cursor: pointer;
+      position: relative;
+      box-sizing: border-box;
+      transition: background .15s ease, border-color .15s ease;
+    }
+
+    .documentos-compra-check:hover {
+      border-color: #64748b;
+    }
+
+    .documentos-compra-check:checked {
+      background: #16a34a;
+      border-color: #16a34a;
+    }
+
+    .documentos-compra-check:checked::after {
+      content: "✓";
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #ffffff;
+      font-size: 12px;
+      line-height: 1;
+      font-weight: 900;
+    }
+
+    .documentos-compra-check:disabled {
+      cursor: wait;
+      opacity: .6;
+    }
+  `
+
+  document.head.appendChild(css)
+}
+
+crearEstilosDocumentosCompra()
+
+
+function crearEstilosHintComprasClick() {
+  if (document.querySelector('#estilosHintComprasClick')) return
+
+  const css = document.createElement('style')
+  css.id = 'estilosHintComprasClick'
+  css.textContent = `
+    .subbox .subbox-hint {
+      display: none !important;
+    }
+
+    .subbox-hint-click {
+      width: 100%;
+      margin: 4px 0 8px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #eff6ff, #f8fafc);
+      border: 1px solid #bfdbfe;
+      color: #1e3a8a;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      text-align: center;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9);
+    }
+  `
+
+  document.head.appendChild(css)
+}
+
+crearEstilosHintComprasClick()
+
+function autoAjustarInputPrecio(input) {
+  if (!input || !input.matches || !input.matches('.subbox[data-tipo="precios"] .subitem-precio-lts input')) return
+
+  const valor = String(input.value || input.placeholder || '')
+  const largo = Math.max(8, Math.min(22, valor.length + 2))
+
+  input.style.width = `${largo}ch`
+}
+
+function autoAjustarInputsPrecio() {
+  if (!contenedor) return
+
+  contenedor.querySelectorAll('.subbox[data-tipo="precios"] .subitem-precio-lts input').forEach(autoAjustarInputPrecio)
+}
+
 function fechaDeAyerISO() {
   const fecha = new Date()
   fecha.setDate(fecha.getDate() - 1)
@@ -474,13 +623,56 @@ function fechaDeAyerISO() {
 }
 
 function fechaBonita(fechaISO) {
-  const meses = [
-    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+  if (!fechaISO) return ''
+
+  const [anio, mes, dia] = fechaISO.split('-')
+
+  return `${dia}/${mes}/${anio}`
+}
+
+function fechaLarga(fechaISO) {
+  if (!fechaISO) return ''
+
+  const [anio, mes, dia] = fechaISO.split('-').map(Number)
+
+  // Crear fecha local evita errores por zona horaria
+  const fecha = new Date(anio, mes - 1, dia)
+
+  const dias = [
+    'domingo',
+    'lunes',
+    'martes',
+    'miércoles',
+    'jueves',
+    'viernes',
+    'sábado'
   ]
 
-  const partes = fechaISO.split('-')
-  return `${Number(partes[2])}/${meses[Number(partes[1]) - 1]}/${partes[0]}`
+  const meses = [
+    'enero',
+    'febrero',
+    'marzo',
+    'abril',
+    'mayo',
+    'junio',
+    'julio',
+    'agosto',
+    'septiembre',
+    'octubre',
+    'noviembre',
+    'diciembre'
+  ]
+
+  return `${dias[fecha.getDay()]} ${dia} de ${meses[mes - 1]} del ${anio}`
+}
+
+function actualizarFechaTexto() {
+  if (!fechaTexto) return
+
+  // La fecha ya se muestra dentro del encabezado de cada tabla.
+  // Ocultamos este bloque superior para no repetirla.
+  fechaTexto.innerHTML = ''
+  fechaTexto.style.display = 'none'
 }
 
 function normalizarTexto(texto) {
@@ -548,9 +740,7 @@ function esDieselOculto(nombreEstacion, nombreProducto) {
 
 fechaInput.value = fechaDeAyerISO()
 
-if (fechaTexto) {
-  fechaTexto.textContent = fechaBonita(fechaInput.value)
-}
+actualizarFechaTexto()
 
 function numberValue(value) {
   if (value === null || value === undefined || value === '') return 0
@@ -596,6 +786,23 @@ function numberValue(value) {
   return Number.isFinite(n) ? n : 0
 }
 
+function numberValueLiquidacion(value) {
+  if (value === null || value === undefined || value === '') return 0
+
+  const limpio = String(value)
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/,/g, '')
+    .replace(/[^0-9.-]/g, '')
+
+  const n = Number(limpio)
+  return Number.isFinite(n) ? n : 0
+}
+
+function numberValuePorCampo(field, value) {
+  return field === 'litros_liquidacion' ? numberValueLiquidacion(value) : numberValue(value)
+}
+
 function capturaPartes(value) {
   if (value === null || value === undefined || value === '') return []
 
@@ -625,6 +832,20 @@ function litros(n) {
   return formatoNumero(Math.round(numberValue(n)), 0)
 }
 
+function litrosLiquidacion(n) {
+  const valor = numberValueLiquidacion(n)
+
+  if (Math.abs(valor - Math.round(valor)) < 0.0000001) {
+    return formatoNumero(valor, 0)
+  }
+
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+    useGrouping: true
+  }).format(valor)
+}
+
 function dosDecimales(n) {
   return formatoNumero(n, 2)
 }
@@ -640,6 +861,7 @@ function limpiarParaEditar(value) {
 
 function formatearPorTipo(value, tipo) {
   if (tipo === 'dos') return dosDecimales(value)
+  if (tipo === 'liquidacion') return litrosLiquidacion(value)
   return litros(value)
 }
 
@@ -674,12 +896,71 @@ function llaveFilaRegistro(registro) {
   return llaveFila(registro.id_estacion, registro.id_producto)
 }
 
+function snapshotRegistroInventario(registro) {
+  return JSON.stringify(limpiarRegistroParaGuardar(registro))
+}
+
+function actualizarOriginalesInventario() {
+  state.originales = new Map()
+
+  state.registros.forEach(registro => {
+    state.originales.set(llaveFilaRegistro(registro), snapshotRegistroInventario(registro))
+  })
+}
+
+function registroModificadoInventario(registroLimpio) {
+  const llave = llaveFila(registroLimpio.id_estacion, registroLimpio.id_producto)
+  const original = state.originales.get(llave)
+
+  if (original === undefined) return true
+
+  return JSON.stringify(registroLimpio) !== original
+}
+
+function hayCambiosSinGuardar() {
+  return state.registros.some(registro => registroModificadoInventario(limpiarRegistroParaGuardar(registro)))
+}
+
+function editandoCaptura() {
+  const activo = document.activeElement
+  return Boolean(activo && activo.classList && activo.classList.contains('format-input'))
+}
+
+function limpiarCacheInventarioServidor() {
+  try {
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('inventario_cache_v1:')) {
+        localStorage.removeItem(key)
+      }
+    })
+  } catch (_) {}
+}
+
+
 function llaveSubbox(idEstacion, idProducto, tipo) {
   return `${idEstacion}|${idProducto}|${tipo}`
 }
 
 function llaveSubboxRegistro(registro, tipo) {
   return llaveSubbox(registro.id_estacion, registro.id_producto, tipo)
+}
+
+function textoTirillaCompraPorEstacion(nombreEstacion) {
+  const clase = claseEstacion(nombreEstacion)
+
+  if (clase === 'ary-1') return 'Tirilla: Bruto (2°)'
+  if (clase === 'ary-2') return 'Tirilla: Aumento Bruto (1°)'
+  if (clase === 'ary-3') return 'Tirilla: Turno Inventario (1°)'
+  if (clase === 'ary-4') return 'Tirilla: Turno Inventario (único)'
+  if (clase === 'ary-5') return 'Tirilla: Aumento Bruto (1°)'
+  if (clase === 'ary-6') return 'Tirilla: Aumento Bruto (1°)'
+  if (clase === 'apache') return 'Tirilla: Aumento Bruto (1°)'
+
+  return 'Aumento Bruto / Turno Inventario'
+}
+
+function etiquetaTirillaCompra(registro, index) {
+  return `F${index + 1}`
 }
 
 function sumaComprasGuardadas(registro) {
@@ -727,9 +1008,16 @@ function recalc(registro) {
   const totalPrecio = totalImportes(registro)
   const divisorPrecio = totalLitrosParaPrecio(registro)
 
-  registro.precio_por_litro = divisorPrecio > 0 ? totalPrecio / divisorPrecio : 0
+  // Si hay importe y litros capturados, el precio visible y el que se guarda
+  // debe salir de esos datos nuevos, no del precio viejo que vino de BD.
+  if (divisorPrecio > 0 && totalPrecio > 0) {
+    registro.precio_por_litro = totalPrecio / divisorPrecio
+  } else {
+    registro.precio_por_litro = numberValue(registro.precio_por_litro)
+  }
+
   registro.venta = numberValue(registro.inventario_inicial) + numberValue(registro.litros_compra) - numberValue(registro.inventario_final)
-  registro.diferencias = numberValue(registro.litros_liquidacion) - numberValue(registro.venta)
+  registro.diferencias = numberValueLiquidacion(registro.litros_liquidacion) - numberValue(registro.venta)
 }
 
 function arregloDetalle(registro, tipo) {
@@ -763,8 +1051,11 @@ function campoDetallePorInput(field) {
   return field === 'sub_litros' ? 'litros' : field
 }
 
-function asegurarParF(registro, index) {
-  asegurarDetalle(registro, 'compras', index)
+function asegurarCompra(registro, index) {
+  return asegurarDetalle(registro, 'compras', index)
+}
+
+function asegurarPrecio(registro, index) {
   asegurarDetalle(registro, 'precios', index)
   asegurarDetalle(registro, 'sub_litros_compra', index)
 }
@@ -773,30 +1064,94 @@ function totalFilasDetalle(registro) {
   return Math.max(registro.compras.length, registro.precios.length, (registro.sub_litros_compra || []).length)
 }
 
+function totalFilasDetallePorTipo(registro, tipo) {
+  if (tipo === 'compras') return registro.compras.length
+
+  return Math.max(registro.precios.length, (registro.sub_litros_compra || []).length)
+}
+
+function detalleVacioCompra(registro, index) {
+  return numberValue(registro.compras[index]?.litros) === 0
+}
+
+function detalleVacioPrecio(registro, index) {
+  const importe = numberValue(registro.precios[index]?.importe)
+  const litrosPrecio = numberValue(registro.sub_litros_compra?.[index]?.litros)
+
+  return importe === 0 && litrosPrecio === 0
+}
+
+function limpiarVaciosFinalesCompras(registro) {
+  while (registro.compras.length > 0) {
+    const index = registro.compras.length - 1
+    if (!detalleVacioCompra(registro, index)) break
+    registro.compras.splice(index, 1)
+  }
+}
+
+function limpiarVaciosFinalesPrecios(registro) {
+  if (!registro.sub_litros_compra) registro.sub_litros_compra = []
+
+  while (Math.max(registro.precios.length, registro.sub_litros_compra.length) > 0) {
+    const index = Math.max(registro.precios.length, registro.sub_litros_compra.length) - 1
+    if (!detalleVacioPrecio(registro, index)) break
+
+    if (registro.precios.length > index) {
+      registro.precios.splice(index, 1)
+    }
+
+    if (registro.sub_litros_compra.length > index) {
+      registro.sub_litros_compra.splice(index, 1)
+    }
+  }
+}
+
+function limpiarDetallePorIndice(registro, tipo, index) {
+  if (tipo === 'compras') {
+    if (registro.compras.length > index) {
+      registro.compras.splice(index, 1)
+    }
+
+    limpiarVaciosFinalesCompras(registro)
+    return
+  }
+
+  if (tipo === 'precios') {
+    if (registro.precios.length > index) {
+      registro.precios.splice(index, 1)
+    }
+
+    if (registro.sub_litros_compra && registro.sub_litros_compra.length > index) {
+      registro.sub_litros_compra.splice(index, 1)
+    }
+
+    limpiarVaciosFinalesPrecios(registro)
+  }
+}
+
 function indiceNuevoCompra(registro) {
-  const total = totalFilasDetalle(registro)
+  const total = totalFilasDetallePorTipo(registro, 'compras')
 
   if (total === 0) return 0
 
   const ultimo = total - 1
   const litros = numberValue(registro.compras[ultimo]?.litros)
-  const importe = numberValue(registro.precios[ultimo]?.importe)
-  const subLitros = numberValue(registro.sub_litros_compra[ultimo]?.litros)
 
-  if (litros === 0 && importe === 0 && subLitros === 0) return ultimo
+  if (litros === 0) return ultimo
 
   return total
 }
 
 function indicePrecioDisponible(registro) {
-  const total = totalFilasDetalle(registro)
+  const total = totalFilasDetallePorTipo(registro, 'precios')
 
   if (total === 0) return 0
 
   for (let i = 0; i < total; i++) {
     const precio = numberValue(registro.precios[i]?.importe)
+    const litros = numberValue(registro.sub_litros_compra?.[i]?.litros)
 
-    if (precio === 0) return i
+    if (precio === 0 && litros === 0) return i
   }
 
   return total
@@ -826,7 +1181,12 @@ function enfocarSelector(selector) {
 }
 
 function abrirDetalle(registro, tipo, index, field) {
-  asegurarParF(registro, index)
+  if (tipo === 'compras') {
+    asegurarCompra(registro, index)
+  } else {
+    asegurarPrecio(registro, index)
+  }
+
   recalc(registro)
   state.subboxAbierto = llaveSubboxRegistro(registro, tipo)
   render()
@@ -834,7 +1194,7 @@ function abrirDetalle(registro, tipo, index, field) {
 }
 
 function abrirPrecioDesdeCompra(registro, index) {
-  asegurarParF(registro, index)
+  asegurarPrecio(registro, index)
   recalc(registro)
   state.subboxAbierto = llaveSubboxRegistro(registro, 'precios')
   render()
@@ -843,7 +1203,7 @@ function abrirPrecioDesdeCompra(registro, index) {
 
 function indiceSubboxPorClick(registro, tipo) {
   const abierto = state.subboxAbierto === llaveSubboxRegistro(registro, tipo)
-  const total = totalFilasDetalle(registro)
+  const total = totalFilasDetallePorTipo(registro, tipo)
 
   if (abierto) return total
 
@@ -884,6 +1244,26 @@ function cerrarTodosSubitems() {
   state.subboxAbierto = ''
 }
 
+
+function obtenerPrecioPorLitro(row) {
+  const precioDirecto = numberValue(row.precio_por_litro)
+  if (precioDirecto > 0) return precioDirecto
+
+  const precios = Array.isArray(row.precios) ? row.precios : []
+  const subLitros = Array.isArray(row.sub_litros_compra) ? row.sub_litros_compra : []
+  const compras = Array.isArray(row.compras) ? row.compras : []
+
+  const totalImporte = precios.reduce((a, b) => a + numberValue(b.importe), 0)
+  const totalSubLitros = subLitros.reduce((a, b) => a + numberValue(b.litros ?? b.sub_litros ?? b.lts), 0)
+  const totalCompras = compras.reduce((a, b) => a + numberValue(b.litros), 0)
+
+  const divisor = totalSubLitros > 0 ? totalSubLitros : totalCompras
+
+  if (totalImporte > 0 && divisor > 0) return totalImporte / divisor
+
+  return 0
+}
+
 function normalize(rows) {
   state.subboxAbierto = ''
 
@@ -891,27 +1271,27 @@ function normalize(rows) {
     .filter(row => !esDieselOculto(row.nombre_estacion, row.nombre_producto))
     .map(row => {
     let compras = row.compras && row.compras.length
-      ? row.compras.map(x => ({ litros: numberValue(x.litros) })).filter(x => numberValue(x.litros) !== 0)
+      ? row.compras.map(x => ({ etiqueta: x.etiqueta, litros: numberValue(x.litros) })).filter(x => numberValue(x.litros) !== 0)
       : []
 
     let precios = row.precios && row.precios.length
-      ? row.precios.map(x => ({ importe: numberValue(x.importe) })).filter(x => numberValue(x.importe) !== 0)
+      ? row.precios.map(x => ({ etiqueta: x.etiqueta, importe: numberValue(x.importe) })).filter(x => numberValue(x.importe) !== 0)
       : []
 
     let subLitrosCompra = row.sub_litros_compra && row.sub_litros_compra.length
-      ? row.sub_litros_compra.map(x => ({ litros: numberValue(x.litros ?? x.sub_litros ?? x.lts) })).filter(x => numberValue(x.litros) !== 0)
+      ? row.sub_litros_compra.map(x => ({ etiqueta: x.etiqueta, litros: numberValue(x.litros ?? x.sub_litros ?? x.lts) })).filter(x => numberValue(x.litros) !== 0)
       : []
 
     const litrosCompra = numberValue(row.litros_compra)
-    const precioPorLitro = numberValue(row.precio_por_litro)
+    const precioPorLitro = litrosCompra > 0 ? obtenerPrecioPorLitro(row) : 0
 
     if (!compras.length && litrosCompra > 0) {
-      compras = [{ litros: litrosCompra }]
+      compras = [{ etiqueta: undefined, litros: litrosCompra }]
     }
 
     if (!precios.length && precioPorLitro > 0 && litrosCompra > 0) {
       const divisorPrecio = subLitrosCompra.length ? subLitrosCompra.reduce((a, b) => a + numberValue(b.litros), 0) : litrosCompra
-      precios = [{ importe: precioPorLitro * divisorPrecio }]
+      precios = [{ etiqueta: undefined, importe: precioPorLitro * divisorPrecio }]
     }
 
     return {
@@ -924,9 +1304,10 @@ function normalize(rows) {
       inventario_inicial_bloqueado: obtenerBloqueoInventarioInicial(row),
       litros_compra: litrosCompra,
       precio_por_litro: precioPorLitro,
+      precio_confirmado: boolValue(row.precio_confirmado),
       inventario_final: numberValue(row.inventario_final),
       venta: numberValue(row.venta),
-      litros_liquidacion: numberValue(row.litros_liquidacion),
+      litros_liquidacion: numberValueLiquidacion(row.litros_liquidacion),
       diferencias: numberValue(row.diferencias),
       compras,
       precios,
@@ -937,16 +1318,37 @@ function normalize(rows) {
   state.registros.forEach(recalc)
 }
 
-async function cargar() {
+async function cargar(opciones = {}) {
+  const forzar = Boolean(opciones.forzar)
+  const silencioso = Boolean(opciones.silencioso)
+  const automatico = Boolean(opciones.automatico)
+
   try {
-    if (fechaTexto) {
-      fechaTexto.textContent = fechaBonita(fechaInput.value)
+    if (automatico && (editandoCaptura() || hayCambiosSinGuardar())) return
+
+    if (!automatico && !forzar && hayCambiosSinGuardar()) {
+      const continuar = window.confirm
+        ? window.confirm('Tienes cambios sin guardar. Si cargas de nuevo se perderán. ¿Quieres continuar?')
+        : false
+
+      if (!continuar) return
     }
 
-    const url = `/api/inventarios?fecha=${fechaInput.value}`
+    state.cargando = true
+
+    actualizarFechaTexto()
+
+    limpiarCacheInventarioServidor()
+
+    const url = `/api/inventarios?fecha=${encodeURIComponent(fechaInput.value)}&t=${Date.now()}`
     console.log('Cargando:', url)
 
-    const response = await fetch(url)
+    const response = await fetch(url, {
+      cache: 'no-store',
+      headers: {
+        'Cache-Control': 'no-cache'
+      }
+    })
 
     if (!response.ok) {
       let mensaje = 'No se pudo cargar la información'
@@ -967,20 +1369,148 @@ async function cargar() {
     console.log('Datos recibidos:', data)
 
     normalize(data)
+    actualizarOriginalesInventario()
     render()
   } catch (error) {
     console.error('ERROR CARGAR:', error)
-    notify(error.message)
+    if (!silencioso) notify(error.message)
+  } finally {
+    state.cargando = false
   }
 }
 
 function limpiarRegistroParaGuardar(registro) {
+  const total = Math.max(
+    registro.compras.length,
+    registro.precios.length,
+    (registro.sub_litros_compra || []).length
+  )
+
+  const compras = []
+  const precios = []
+  const sub_litros_compra = []
+
+  for (let i = 0; i < total; i++) {
+    const litrosCompra = numberValue(registro.compras[i]?.litros)
+    const importe = numberValue(registro.precios[i]?.importe)
+    const litrosPrecio = numberValue(registro.sub_litros_compra?.[i]?.litros)
+
+    if (litrosCompra !== 0 || importe !== 0 || litrosPrecio !== 0) {
+      const etiqueta = etiquetaTirillaCompra(registro, i)
+
+      compras.push({
+        etiqueta,
+        litros: litrosCompra
+      })
+
+      precios.push({
+        etiqueta,
+        importe
+      })
+
+      sub_litros_compra.push({
+        etiqueta,
+        litros: litrosPrecio
+      })
+    }
+  }
+
+  const totalPrecio = precios.reduce((suma, item) => suma + numberValue(item.importe), 0)
+  const totalSubLitros = sub_litros_compra.reduce((suma, item) => suma + numberValue(item.litros), 0)
+  const totalComprasLimpias = compras.reduce((suma, item) => suma + numberValue(item.litros), 0)
+  const divisorPrecio = totalSubLitros > 0 ? totalSubLitros : totalComprasLimpias
+  const precioPorLitro = divisorPrecio > 0 && totalPrecio > 0
+    ? totalPrecio / divisorPrecio
+    : numberValue(registro.precio_por_litro)
+
   return {
     ...registro,
-    compras: registro.compras.filter(x => numberValue(x.litros) !== 0),
-    precios: registro.precios.filter(x => numberValue(x.importe) !== 0),
-    sub_litros_compra: (registro.sub_litros_compra || []).filter(x => numberValue(x.litros) !== 0)
+    compras,
+    precios,
+    sub_litros_compra,
+    litros_compra: totalComprasLimpias,
+    precio_por_litro: precioPorLitro
   }
+}
+
+function guardarInputActivo(input = document.activeElement) {
+  if (!input || !input.classList || !input.classList.contains('format-input')) return
+
+  const row = input.closest('tr')
+  if (!row) return
+
+  const registro = getRegistro(row.dataset.idEstacion, row.dataset.idProducto)
+  if (!registro) return
+
+  if (input.dataset.field && !input.hasAttribute('readonly')) {
+    registro[input.dataset.field] = numberValuePorCampo(input.dataset.field, input.value)
+  }
+
+  if (input.dataset.subInput) {
+    const subbox = input.closest('.subbox')
+    const item = input.closest('.subitem')
+
+    if (subbox && item) {
+      const tipo = subbox.dataset.tipo
+      const index = Number(item.dataset.index)
+      const field = input.dataset.subInput
+      const tipoDetalle = tipoDetallePorInput(tipo, field)
+      const campoDetalle = campoDetallePorInput(field)
+      const detalle = asegurarDetalle(registro, tipoDetalle, index)
+
+      detalle[campoDetalle] = capturaValue(input.value)
+    }
+  }
+
+  recalc(registro)
+}
+
+function guardarInputsVisibles() {
+  document.querySelectorAll('.format-input').forEach(input => {
+    if (!input.hasAttribute('readonly')) {
+      guardarInputActivo(input)
+    }
+  })
+}
+
+function actualizarPrecioConfirmadoEnOriginal(registro) {
+  const llave = llaveFilaRegistro(registro)
+  const original = state.originales.get(llave)
+
+  if (original === undefined) return
+
+  try {
+    const datosOriginales = JSON.parse(original)
+    datosOriginales.precio_confirmado = Boolean(registro.precio_confirmado)
+    state.originales.set(llave, JSON.stringify(datosOriginales))
+  } catch (_) {}
+}
+
+async function guardarDocumentosCompraRecibidos(registro, recibido) {
+  const response = await fetch('/api/inventarios/precio-confirmado', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify({
+      fecha: fechaInput.value,
+      id_estacion: registro.id_estacion,
+      id_producto: registro.id_producto,
+      precio_confirmado: Boolean(recibido)
+    })
+  })
+
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok) {
+    throw new Error(data.message || 'No se pudo guardar el estado de documentos de compra')
+  }
+
+  if (data.id_inventario) {
+    registro.id_inventario = data.id_inventario
+  }
+
+  registro.precio_confirmado = Boolean(recibido)
+  actualizarPrecioConfirmadoEnOriginal(registro)
 }
 
 function registroTieneCaptura(registro) {
@@ -989,32 +1519,51 @@ function registroTieneCaptura(registro) {
     totalImportes(registro) !== 0 ||
     totalSubLitrosCompra(registro) !== 0 ||
     numberValue(registro.inventario_final) !== 0 ||
-    numberValue(registro.litros_liquidacion) !== 0
+    numberValueLiquidacion(registro.litros_liquidacion) !== 0 ||
+    Boolean(registro.precio_confirmado)
 }
 
 async function guardar() {
-  state.registros.forEach(recalc)
+  if (state.guardando) return
+
+  guardarInputsVisibles()
+  /*state.registros.forEach(recalc)*/
 
   const registros = state.registros
     .map(limpiarRegistroParaGuardar)
     .filter(registroTieneCaptura)
 
-  const response = await fetch('/api/inventarios/guardar', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fecha: fechaInput.value,
-      registros
-    })
-  })
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}))
-    throw new Error(error.message || 'No se pudo guardar')
+  if (!registros.length) {
+    notify('No hay datos por guardar')
+    return
   }
 
-  notify('Inventario guardado correctamente')
-  await cargar()
+  state.guardando = true
+
+  try {
+    const response = await fetch('/api/inventarios/guardar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify({
+        fecha: fechaInput.value,
+        registros
+      })
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.message || 'No se pudo guardar')
+    }
+
+    limpiarCacheInventarioServidor()
+    notify('Inventario guardado correctamente')
+
+    actualizarOriginalesInventario()
+    render()
+  } finally {
+    state.guardando = false
+  }
 }
 
 function renderSubbox(registro, tipo) {
@@ -1022,15 +1571,15 @@ function renderSubbox(registro, tipo) {
   const label = tipo === 'compras' ? 'litros' : 'importe'
   const placeholder = tipo === 'compras' ? 'Litros' : 'Importe compra'
   const abierto = state.subboxAbierto === llaveSubboxRegistro(registro, tipo) ? 'open' : ''
-  const totalFilas = totalFilasDetalle(registro)
+  const totalFilas = totalFilasDetallePorTipo(registro, tipo)
 
   return `
     <div class="subbox" data-id-estacion="${registro.id_estacion}" data-id-producto="${registro.id_producto}" data-tipo="${tipo}">
       <div class="subtotal">
-        <input class="captura-sub calculado"  type="text" inputmode="decimal" autocomplete="off" placeholder="${placeholder}" value="${valorVisibleSubbox(registro, tipo)}" data-sub-capture="${label}" readonly>
-        ${tipo === 'compras' ? '<small class="subbox-hint">Aumento bruto / Turno inventario</small>' : ''}
+        <input class="captura-sub calculado" type="text" inputmode="decimal" autocomplete="off" placeholder="${placeholder}" value="${valorVisibleSubbox(registro, tipo)}" data-sub-capture="${label}" readonly>
       </div>
       <div class="subitems ${abierto}">
+        ${tipo === 'compras' ? `<div class="subbox-hint-click">${escaparHTML(textoTirillaCompraPorEstacion(registro.nombre_estacion))}</div>` : ''}
         ${Array.from({ length: totalFilas }).map((_, index) => {
           const item = arr[index] || {}
           const valor = numberValue(item[label]) === 0 ? '' : tipo === 'compras' ? litros(item[label]) : dosDecimales(item[label])
@@ -1038,7 +1587,7 @@ function renderSubbox(registro, tipo) {
           if (tipo === 'compras') {
             return `
               <div class="subitem" data-index="${index}">
-                <span>F${index + 1}</span>
+                <span>${escaparHTML(etiquetaTirillaCompra(registro, index))}</span>
                 <input class="format-input"  type="text" inputmode="decimal" autocomplete="off" value="${valor}" data-sub-input="${label}" data-format="litros">
                 <button data-remove="1" type="button">×</button>
               </div>
@@ -1050,7 +1599,7 @@ function renderSubbox(registro, tipo) {
 
           return `
             <div class="subitem subitem-precio-lts" data-index="${index}">
-              <span>F${index + 1}</span>
+              <span>${escaparHTML(etiquetaTirillaCompra(registro, index))}</span>
               <input class="format-input" type="text" inputmode="decimal" autocomplete="off" value="${valor}" data-sub-input="importe" data-format="dos" placeholder="Importe">
               <input class="format-input" type="text" inputmode="decimal" autocomplete="off" value="${valorSubLitros}" data-sub-input="sub_litros" data-format="litros" placeholder="Litros">
               <button data-remove="1" type="button">×</button>
@@ -1071,7 +1620,21 @@ function render() {
 
     return `
       <section class="station-card">
-        <div class="station-title ${claseEstacion(nombre)}" >${escaparHTML(nombreBonito)}</div>
+        <div class="station-title ${claseEstacion(nombre)}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+          <span>${escaparHTML(nombreBonito)}</span>
+          <span style="
+            display:block;
+            margin-top:2px;
+            font-size:15px;
+            line-height:1.15;
+            font-weight:800;
+            text-align:right;
+            opacity:1;
+            white-space:nowrap;
+          ">
+            ${escaparHTML(fechaLarga(fechaInput.value))}
+          </span>
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -1079,6 +1642,7 @@ function render() {
                 <th>Producto</th>
                 <th>Inv. inicial</th>
                 <th >Litros compra</th>
+                <th class="th-documentos-compra"></th>
                 <th>Precio por litro</th>
                 <th>Inv. final</th>
                 <th >Venta</th>
@@ -1098,10 +1662,22 @@ function render() {
                     <input class="num ${registro.inventario_inicial_bloqueado ? 'calculado' : 'format-input'}"  type="text" inputmode="decimal" autocomplete="off" data-field="inventario_inicial" data-format="litros" value="${litros(registro.inventario_inicial)}" ${registro.inventario_inicial_bloqueado ? 'readonly title="Tomado del inventario final del día anterior" data-locked="1"' : ''}>
                   </td>
                   <td>${renderSubbox(registro, 'compras')}</td>
+                  <td class="td-documentos-compra">
+                    <div class="documentos-compra-wrap">
+                      <input
+                        type="checkbox"
+                        class="documentos-compra-check"
+                        data-documentos-compra="1"
+                        aria-label="Documentos de compra recibidos"
+                        title="Documentos de compra recibidos"
+                        ${registro.precio_confirmado ? 'checked' : ''}
+                      >
+                    </div>
+                  </td>
                   <td>${renderSubbox(registro, 'precios')}</td>
                   <td><input class="num format-input"  type="text" inputmode="decimal" autocomplete="off" data-field="inventario_final" data-format="litros" value="${litros(registro.inventario_final)}"></td>
                   <td><input class="num calculado"  readonly value="${litros(registro.venta)}" data-calc="venta"></td>
-                  <td><input class="num format-input"  type="text" inputmode="decimal" autocomplete="off" data-field="litros_liquidacion" data-format="litros" value="${litros(registro.litros_liquidacion)}"></td>
+                  <td><input class="num format-input"  type="text" inputmode="decimal" autocomplete="off" data-field="litros_liquidacion" data-format="liquidacion" value="${litrosLiquidacion(registro.litros_liquidacion)}"></td>
                   <td><input class="num calculado"  readonly value="${litros(registro.diferencias)}" data-calc="diferencias"></td>
                 </tr>
               `).join('')}
@@ -1111,6 +1687,8 @@ function render() {
       </section>
     `
   }).join('')
+
+  autoAjustarInputsPrecio()
 }
 
 function actualizarCalculosFila(row, registro) {
@@ -1174,6 +1752,7 @@ contenedor.addEventListener('focusin', event => {
   }
 
   event.target.value = limpiarParaEditar(event.target.value)
+  autoAjustarInputPrecio(event.target)
   event.target.select()
 })
 
@@ -1187,7 +1766,7 @@ contenedor.addEventListener('focusout', event => {
 
     if (registro) {
       if (event.target.dataset.field) {
-        registro[event.target.dataset.field] = numberValue(event.target.value)
+        registro[event.target.dataset.field] = numberValuePorCampo(event.target.dataset.field, event.target.value)
       }
 
       if (event.target.dataset.subInput) {
@@ -1213,6 +1792,7 @@ contenedor.addEventListener('focusout', event => {
 
   const tipo = event.target.dataset.format || 'litros'
   event.target.value = formatearPorTipo(event.target.value, tipo)
+  autoAjustarInputPrecio(event.target)
 })
 
 contenedor.addEventListener('input', event => {
@@ -1225,7 +1805,7 @@ contenedor.addEventListener('input', event => {
   let cambio = false
 
   if (event.target.dataset.field) {
-    registro[event.target.dataset.field] = numberValue(event.target.value)
+    registro[event.target.dataset.field] = numberValuePorCampo(event.target.dataset.field, event.target.value)
     cambio = true
   }
 
@@ -1248,6 +1828,7 @@ contenedor.addEventListener('input', event => {
 
   if (!cambio) return
 
+  autoAjustarInputPrecio(event.target)
   recalc(registro)
   actualizarCalculosFila(row, registro)
 })
@@ -1271,7 +1852,7 @@ contenedor.addEventListener('keydown', event => {
       return
     }
 
-    registro[field] = numberValue(event.target.value)
+    registro[field] = numberValuePorCampo(field, event.target.value)
     recalc(registro)
     actualizarCalculosFila(row, registro)
 
@@ -1302,7 +1883,7 @@ contenedor.addEventListener('keydown', event => {
     const tipo = subbox.dataset.tipo
 
     if (tipo === 'compras') {
-      const index = Math.max(totalFilasDetalle(registro) - 1, 0)
+      const index = Math.max(totalFilasDetallePorTipo(registro, 'compras') - 1, 0)
       abrirPrecioDesdeCompra(registro, index)
       return
     }
@@ -1338,7 +1919,7 @@ contenedor.addEventListener('keydown', event => {
     }
 
     if (tipo === 'precios' && field === 'importe') {
-      asegurarParF(registro, index)
+      asegurarPrecio(registro, index)
       state.subboxAbierto = llaveSubboxRegistro(registro, 'precios')
       render()
       enfocarSelector(selectorSubInput(registro.id_estacion, registro.id_producto, 'precios', index, 'sub_litros'))
@@ -1354,7 +1935,39 @@ contenedor.addEventListener('keydown', event => {
   }
 })
 
-contenedor.addEventListener('click', event => {
+contenedor.addEventListener('click', async event => {
+  const checkDocumentos = event.target.closest('[data-documentos-compra]')
+
+  if (checkDocumentos) {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const row = checkDocumentos.closest('tr')
+    if (!row) return
+
+    const registro = getRegistro(row.dataset.idEstacion, row.dataset.idProducto)
+    if (!registro) return
+
+    const estadoAnterior = Boolean(registro.precio_confirmado)
+    const estadoNuevo = Boolean(checkDocumentos.checked)
+
+    checkDocumentos.disabled = true
+
+    try {
+      await guardarDocumentosCompraRecibidos(registro, estadoNuevo)
+      checkDocumentos.checked = estadoNuevo
+      notify(estadoNuevo ? 'Documentos de compra recibidos' : 'Documentos de compra pendientes')
+    } catch (error) {
+      registro.precio_confirmado = estadoAnterior
+      checkDocumentos.checked = estadoAnterior
+      notify(error.message)
+    } finally {
+      checkDocumentos.disabled = false
+    }
+
+    return
+  }
+
   const captura = event.target.closest('[data-sub-capture]')
 
   if (captura) {
@@ -1380,6 +1993,9 @@ contenedor.addEventListener('click', event => {
 
   if (!remove) return
 
+  event.preventDefault()
+  event.stopPropagation()
+
   const subbox = remove.closest('.subbox')
   const item = remove.closest('.subitem')
 
@@ -1390,29 +2006,18 @@ contenedor.addEventListener('click', event => {
   if (!registro) return
 
   const index = Number(item.dataset.index)
+  const tipo = subbox.dataset.tipo
 
-  if (registro.compras[index]) {
-    registro.compras.splice(index, 1)
-  }
-
-  if (registro.precios[index]) {
-    registro.precios.splice(index, 1)
-  }
-
-  if (registro.sub_litros_compra[index]) {
-    registro.sub_litros_compra.splice(index, 1)
-  }
+  limpiarDetallePorIndice(registro, tipo, index)
 
   recalc(registro)
-  state.subboxAbierto = llaveSubboxRegistro(registro, subbox.dataset.tipo)
+  state.subboxAbierto = llaveSubboxRegistro(registro, tipo)
   render()
 })
 
 fechaInput.addEventListener('change', async () => {
   try {
-    if (fechaTexto) {
-      fechaTexto.textContent = fechaBonita(fechaInput.value)
-    }
+    actualizarFechaTexto()
 
     await cargar()
   } catch (error) {
@@ -1472,8 +2077,12 @@ function generarPDF() {
     return `
       <section class="pdf-station-card">
         <div class="pdf-station-title ${claseEstacion(nombre)}">
-          ${escaparHTML(nombreBonito)}
-        </div>
+  <span>${escaparHTML(nombreBonito)}</span>
+
+  <span class="pdf-station-fecha">
+    ${escaparHTML(fechaLarga(fechaInput.value))}
+  </span>
+</div>
 
         <div class="pdf-table-wrap">
           <table>
@@ -1546,7 +2155,7 @@ function generarPDF() {
 
         @page {
           size: letter portrait;
-          margin: 0.14in 0.16in 0.16in 0.16in;
+          margin: 0.08in 0.12in 0.08in 0.12in;
         }
 
         html,
@@ -1554,7 +2163,7 @@ function generarPDF() {
           margin: 0;
           padding: 0;
           width: 100%;
-          height: 100%;
+          height: auto;
           font-family: Arial, sans-serif;
           color: #0f172a;
           background: #ffffff;
@@ -1562,12 +2171,15 @@ function generarPDF() {
         }
 
         body {
-          overflow: visible;
+          overflow: hidden;
         }
 
         .pdf-sheet {
           width: 100%;
-          height: 10.65in;
+          height: auto;
+          min-height: 0;
+          page-break-after: avoid;
+          break-after: avoid;
           display: flex;
           flex-direction: column;
           background: #ffffff;
@@ -1588,11 +2200,11 @@ function generarPDF() {
           min-height: 0;
           display: flex;
           flex-direction: column;
-          justify-content: center;
+          justify-content: flex-start;
           align-items: center;
           width: 100%;
-          padding-top: 0;
-          padding-bottom: 4px;
+          padding-top: 2px;
+          padding-bottom: 0;
         }
 
         .pdf-header {
@@ -1621,10 +2233,10 @@ function generarPDF() {
         }
 
         .pdf-fecha {
-          margin-top: 1px;
+          margin-top: 3px;
           font-size: 11.5pt;
-          line-height: 1;
-          font-weight: 400;
+          line-height: 1.1;
+          font-weight: 700;
           color: #1e3a8a;
           text-align: center;
         }
@@ -1665,6 +2277,20 @@ function generarPDF() {
           background: linear-gradient(135deg, #0f172a, #1e3a8a);
           white-space: nowrap;
           overflow: visible;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+
+        .pdf-station-fecha {
+          display: block;
+          text-align: right;
+          white-space: nowrap;
+          font-size: 8.4pt;
+          line-height: 1;
+          font-weight: 700;
+          opacity: 1;
         }
 
         .pdf-station-title.ary-1 {
@@ -1774,7 +2400,7 @@ function generarPDF() {
         .pdf-footer {
           flex: 0 0 auto;
           width: 84%;
-          margin: 12px auto 0 auto;
+          margin: 7px auto 0 auto;
           padding-top: 3px;
           border-top: 1px solid #94a3b8;
           background: #ffffff;
@@ -1800,16 +2426,19 @@ function generarPDF() {
         @media print {
           html,
           body {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: visible;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 100% !important;
+            height: auto !important;
+            overflow: hidden !important;
           }
 
           .pdf-sheet {
-            width: 100%;
-            height: 10.65in;
+            width: 100% !important;
+            height: auto !important;
+            min-height: 0 !important;
+            page-break-after: avoid !important;
+            break-after: avoid !important;
           }
         }
       </style>
@@ -1822,8 +2451,10 @@ function generarPDF() {
           <div class="pdf-header">
             <div class="pdf-header-texto">
               <h1>Inventarios de Combustible</h1>
-              <div class="pdf-fecha">Fecha: ${escaparHTML(fechaBonita(fechaInput.value))}</div>
-            </div>
+              <div class="pdf-fecha">
+                ${escaparHTML(fechaLarga(fechaInput.value))}
+              </div>
+          </div>
           </div>
 
           <div class="pdf-stations-list">
@@ -1955,11 +2586,11 @@ async function crearImagenInventarioPCCanvas() {
   ctx.fillText('Inventarios de Combustible', ancho / 2, 68)
 
   ctx.fillStyle = '#1d4ed8'
-  ctx.font = '500 23px Arial'
-  ctx.fillText(`Fecha: ${fechaBonita(fechaInput.value)}`, ancho / 2, 106)
+  ctx.font = '700 25px Arial'
+  ctx.fillText(fechaLarga(fechaInput.value), ancho / 2, 108)
 
   const margenX = 48
-  const topGrid = 146
+  const topGrid = 150
   const gapX = 22
   const gapY = 14
   const cardW = Math.floor((ancho - margenX * 2 - gapX) / 2)
@@ -2234,4 +2865,24 @@ $('#btnPDF').addEventListener('click', generarPDF)
 
 asegurarBotonWhatsApp()
 
+
+if (!window.__inventarioAutoRefreshMultiPc) {
+  window.__inventarioAutoRefreshMultiPc = setInterval(async () => {
+    if (state.cargando || state.guardando || editandoCaptura() || hayCambiosSinGuardar()) return
+
+    try {
+      await cargar({
+        forzar: true,
+        silencioso: true,
+        automatico: true
+      })
+    } catch (_) {}
+  }, 8000)
+}
+
 cargar().catch(error => notify(error.message))
+
+
+
+
+

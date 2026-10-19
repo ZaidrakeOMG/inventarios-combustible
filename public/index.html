@@ -9,18 +9,23 @@
 <body>
   <div class="app">
     <header class="hero">
-      <div>
-        <p class="eyebrow">GRUPO ARY GASOLINERAS</p>
-        <h1>Inventarios de Combustible</h1>
-        <p class="subtitle">Captura diaria por estación y producto</p>
+      <div class="brand">
+        <img class="logo-ary" src="/imagenes/Ary%20Logo%20A%20%281%29.png" alt="Logo ARY">
+
+        <div>
+          <p class="eyebrow">GRUPO ARY GASOLINERAS</p>
+          <h1>Inventarios de Combustible</h1>
+          <p class="subtitle">Captura diaria por estación y producto</p>
+        </div>
       </div>
 
       <div class="actions">
         <input type="date" id="fecha">
         <div id="fechaTexto" class="fecha-texto"></div>
-        <button id="btnCargar">Cargar</button>
-        <button id="btnGuardar">Guardar</button>
-        <button id="btnPDF">PDF</button>
+        <button id="btnCargar" type="button">Cargar</button>
+        <button id="btnGuardar" type="button">Guardar</button>
+        <button id="btnPDF" type="button">PDF</button>
+        <button id="btnWhatsApp" type="button">Copiar imagen</button>
       </div>
     </header>
 
@@ -29,6 +34,6 @@
 
   <div id="toast"></div>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=20260703-2"></script>
 </body>
 </html>
