@@ -79,6 +79,7 @@ const REMOTE_SQL_USER = process.env.REMOTE_SQL_USER || process.env.SQL_USER || '
 const REMOTE_SQL_PASSWORD = process.env.REMOTE_SQL_PASSWORD || process.env.SQL_PASSWORD || ''
 const REMOTE_SQL_DATABASE = process.env.REMOTE_SQL_DATABASE || process.env.SQL_DATABASE || ''
 const REMOTE_SQL_CONNECTION_TIMEOUT = Number.parseInt(process.env.REMOTE_SQL_CONNECTION_TIMEOUT, 10) || 5000
+const POLARIS_DATABASE = process.env.POLARIS_DATABASE || process.env.REMOTE_SQL_DATABASE || 'Polaris'
 
 function sqlTargetFromRequest(req) {
   return {
@@ -420,6 +421,193 @@ app.get('/api/health-sql', async (req, res) => {
       message: error.message
     })
   }
+})
+
+
+app.get('/api/pipas/polaris/estado', async (req, res) => {
+  const fechaSolicitada = String(req.query.fecha || '').trim()
+  const fechaObjetivo = /^\d{4}-\d{2}-\d{2}$/.test(fechaSolicitada)
+    ? fechaSolicitada
+    : fechaISO(new Date())
+  const soloActual = ['1', 'true', 'yes', 'si', 'sí'].includes(
+    String(req.query.solo_actual || '').toLowerCase()
+  )
+
+  async function consultarServidorPolaris(server) {
+    const p = await getRemotePool(server, POLARIS_DATABASE)
+
+    const metaResult = await crearRequestPool(p).query(`
+      SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+      SELECT TOP (1)
+        NoES AS no_es,
+        Estacion AS nombre_estacion,
+        DireccionIP AS direccion_ip,
+        CONVERT(VARCHAR(10), FechaContable, 23) AS fecha_contable,
+        TurnoActual AS turno_actual,
+        CONVERT(VARCHAR(19), FechaHora, 120) AS fecha_hora_estacion
+      FROM dbo.Estaciones WITH (NOLOCK)
+      ORDER BY NoES;
+    `)
+
+    if (!metaResult.recordset.length) {
+      throw new Error('No se encontró la estación en Polaris')
+    }
+
+    const meta = metaResult.recordset[0]
+    const noEs = Number(meta.no_es)
+
+    if (!Number.isFinite(noEs) || noEs <= 0) {
+      throw new Error('Polaris devolvió un NoES inválido')
+    }
+
+    const actualesResult = await crearRequestPool(p)
+      .input('no_es', sql.Int, noEs)
+      .query(`
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+        SELECT
+          t.NoProducto AS no_producto,
+          p.Producto AS nombre_producto,
+          CAST(SUM(CAST(ISNULL(t.Volumen, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS tanque_actual,
+          CAST(SUM(CAST(ISNULL(t.CapacidadTotal, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS capacidad_tanque,
+          CONVERT(VARCHAR(19), MAX(t.FechaHora), 120) AS fecha_tanque
+        FROM dbo.Tanques t WITH (NOLOCK)
+        INNER JOIN dbo.Productos p WITH (NOLOCK)
+          ON p.NoProducto = t.NoProducto
+        WHERE t.NoES = @no_es
+          AND p.TipoProducto = 'C'
+        GROUP BY
+          t.NoProducto,
+          p.Producto
+        ORDER BY t.NoProducto;
+      `)
+
+    let cierres = []
+    const fechaContableActual = String(meta.fecha_contable || '').slice(0, 10)
+    const puedeUsarCierre = !fechaContableActual || fechaObjetivo <= fechaContableActual
+
+    if (!soloActual && puedeUsarCierre) {
+      const cierresResult = await crearRequestPool(p)
+        .input('no_es', sql.Int, noEs)
+        .input('fecha_objetivo', sql.Date, fechaObjetivo)
+        .query(`
+          SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+
+          ;WITH UltimaLecturaTanque AS (
+            SELECT
+              e.NoTanque,
+              e.NoProducto,
+              e.Volumen,
+              e.FechaHora,
+              ROW_NUMBER() OVER (
+                PARTITION BY e.NoTanque
+                ORDER BY e.FechaHora DESC
+              ) AS rn
+            FROM dbo.Existencias e WITH (NOLOCK)
+            WHERE e.NoES = @no_es
+              AND e.FechaContable >= DATEADD(DAY, -1, @fecha_objetivo)
+              AND e.FechaContable < @fecha_objetivo
+          )
+          SELECT
+            u.NoProducto AS no_producto,
+            p.Producto AS nombre_producto,
+            CAST(SUM(CAST(ISNULL(u.Volumen, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS inventario_inicial,
+            CONVERT(VARCHAR(19), MAX(u.FechaHora), 120) AS fecha_cierre
+          FROM UltimaLecturaTanque u
+          INNER JOIN dbo.Productos p WITH (NOLOCK)
+            ON p.NoProducto = u.NoProducto
+          WHERE u.rn = 1
+            AND p.TipoProducto = 'C'
+          GROUP BY
+            u.NoProducto,
+            p.Producto
+          ORDER BY u.NoProducto;
+        `)
+
+      cierres = cierresResult.recordset
+    }
+
+    const productos = new Map()
+
+    for (const row of actualesResult.recordset) {
+      productos.set(String(row.no_producto), {
+        no_producto: Number(row.no_producto),
+        nombre_producto: row.nombre_producto,
+        tanque_actual: row.tanque_actual === null ? null : Number(row.tanque_actual),
+        capacidad_tanque: row.capacidad_tanque === null ? null : Number(row.capacidad_tanque),
+        fecha_tanque: row.fecha_tanque || null,
+        inventario_inicial: null,
+        fecha_cierre: null
+      })
+    }
+
+    for (const row of cierres) {
+      const key = String(row.no_producto)
+      const actual = productos.get(key) || {
+        no_producto: Number(row.no_producto),
+        nombre_producto: row.nombre_producto,
+        tanque_actual: null,
+        capacidad_tanque: null,
+        fecha_tanque: null
+      }
+
+      productos.set(key, {
+        ...actual,
+        inventario_inicial: row.inventario_inicial === null ? null : Number(row.inventario_inicial),
+        fecha_cierre: row.fecha_cierre || null
+      })
+    }
+
+    return {
+      server,
+      database: POLARIS_DATABASE,
+      no_es: noEs,
+      nombre_estacion: meta.nombre_estacion || '',
+      direccion_ip: meta.direccion_ip || server,
+      fecha_contable: meta.fecha_contable || '',
+      turno_actual: meta.turno_actual,
+      fecha_hora_estacion: meta.fecha_hora_estacion || null,
+      productos: [...productos.values()]
+    }
+  }
+
+  const resultados = await Promise.all(
+    SQL_SERVERS.map(async server => {
+      try {
+        return {
+          ok: true,
+          station: await consultarServidorPolaris(server)
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          server,
+          message: error.message
+        }
+      }
+    })
+  )
+
+  const stations = resultados
+    .filter(item => item.ok && item.station)
+    .map(item => item.station)
+
+  const errors = resultados
+    .filter(item => !item.ok)
+    .map(item => ({
+      server: item.server,
+      message: item.message
+    }))
+
+  res.json({
+    ok: stations.length > 0,
+    fecha: fechaObjetivo,
+    database: POLARIS_DATABASE,
+    solo_actual: soloActual,
+    stations,
+    errors
+  })
 })
 
 app.get('/api/estaciones', async (req, res) => {
