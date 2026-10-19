@@ -5,6 +5,7 @@ const COLOR_EXPORT_LILA = '#e8e2ee'
 const COLOR_EXPORT_LILA_SUAVE = '#f8f7fb'
 const COLOR_EXPORT_BLANCO = '#ffffff'
 const COLOR_EXPORT_GRIS = '#d9d9d9'
+const POLARIS_LIVE_REFRESH_MS = 15000
 
 const estaciones = [
   {
@@ -94,6 +95,9 @@ const state = {
   compras: [],
   cargando: false,
   historialSemanas: [],
+  polarisEstaciones: [],
+  polarisErrores: [],
+  polarisActualizando: false,
   imagenCompras: {
     inicio: '',
     fin: '',
@@ -101,6 +105,8 @@ const state = {
     buscado: false
   }
 }
+
+let polarisLiveTimer = null
 
 const $ = (selector, root = document) => root.querySelector(selector)
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector))
@@ -317,7 +323,115 @@ function notify(message) {
 
 function estacionCoincide(row, estacion) {
   const nombre = normalizarTexto(row.nombre_estacion || row.estacion || row.estacion_nombre || '')
-  return estacion.aliases.some(alias => normalizarTexto(alias) === nombre)
+  if (!nombre) return false
+
+  return estacion.aliases.some(alias => {
+    const aliasNormalizado = normalizarTexto(alias)
+    return nombre === aliasNormalizado ||
+      nombre.startsWith(aliasNormalizado) ||
+      aliasNormalizado.startsWith(nombre)
+  })
+}
+
+function buscarEstacionPolaris(estacion) {
+  return state.polarisEstaciones.find(row => estacionCoincide(row, estacion)) || null
+}
+
+function buscarProductoPolaris(estacion, producto) {
+  const estacionPolaris = buscarEstacionPolaris(estacion)
+  if (!estacionPolaris || !Array.isArray(estacionPolaris.productos)) return null
+
+  const clave = productoKey(producto.nombre)
+
+  return estacionPolaris.productos.find(row => {
+    return productoKey(row.nombre_producto || row.Producto || row.producto || '') === clave
+  }) || null
+}
+
+function valorPolaris(row, campo) {
+  if (!row || row[campo] === null || row[campo] === undefined || row[campo] === '') return null
+  const numero = Number(row[campo])
+  return Number.isFinite(numero) ? numero : null
+}
+
+function inventarioInicialPolaris(estacion, producto) {
+  return valorPolaris(buscarProductoPolaris(estacion, producto), 'inventario_inicial')
+}
+
+function tanqueActualPolaris(estacion, producto) {
+  return valorPolaris(buscarProductoPolaris(estacion, producto), 'tanque_actual')
+}
+
+function capacidadTanquePolaris(estacion, producto) {
+  return valorPolaris(buscarProductoPolaris(estacion, producto), 'capacidad_tanque')
+}
+
+function porcentajeTanquePolaris(estacion, producto) {
+  const actual = tanqueActualPolaris(estacion, producto)
+  const capacidadPolaris = capacidadTanquePolaris(estacion, producto)
+  const capacidad = capacidadPolaris !== null && capacidadPolaris > 0
+    ? capacidadPolaris
+    : capacidadTanqueValor(producto)
+
+  if (actual === null || capacidad <= 0) return null
+  return Math.max(0, Math.min(100, (actual / capacidad) * 100))
+}
+
+function fechaHoraBrevePolaris(valor) {
+  const texto = String(valor || '')
+  const match = texto.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/)
+  if (!match) return ''
+
+  return `${match[3]}/${match[2]} ${match[4]}:${match[5]}`
+}
+
+function textoTanquePolaris(estacion, producto) {
+  const actual = tanqueActualPolaris(estacion, producto)
+  if (actual === null) return 'Sin lectura'
+
+  const porcentaje = porcentajeTanquePolaris(estacion, producto)
+  return porcentaje === null
+    ? `${litros(actual)} L`
+    : `${litros(actual)} L · ${Math.round(porcentaje)}%`
+}
+
+function tituloTanquePolaris(estacion, producto) {
+  const row = buscarProductoPolaris(estacion, producto)
+  if (!row) return 'Sin lectura disponible de Polaris'
+
+  const fecha = fechaHoraBrevePolaris(row.fecha_tanque)
+  const estacionPolaris = buscarEstacionPolaris(estacion)
+  const servidor = estacionPolaris ? estacionPolaris.server : ''
+
+  return [
+    'Lectura actual del tanque en Polaris',
+    fecha ? `Actualizado: ${fecha}` : '',
+    servidor ? `Servidor: ${servidor}` : ''
+  ].filter(Boolean).join(' · ')
+}
+
+function renderTanquePolaris(estacion, producto) {
+  const actual = tanqueActualPolaris(estacion, producto)
+  const clase = actual === null ? ' sin-lectura' : ''
+  const claveProducto = productoKey(producto.nombre)
+
+  return `
+    <span
+      class="tanque-live${clase}"
+      data-polaris-live-estacion="${estacion.id_estacion}"
+      data-polaris-live-producto="${escaparHTML(claveProducto)}"
+      title="${escaparHTML(tituloTanquePolaris(estacion, producto))}"
+    >${escaparHTML(textoTanquePolaris(estacion, producto))}</span>
+  `
+}
+
+function fuenteInventarioInicialPolaris(estacion, producto) {
+  const row = buscarProductoPolaris(estacion, producto)
+  const valor = inventarioInicialPolaris(estacion, producto)
+  if (!row || valor === null) return ''
+
+  const fecha = fechaHoraBrevePolaris(row.fecha_cierre)
+  return `<div class="polaris-inicial-source">Polaris cierre${fecha ? ` ${escaparHTML(fecha)}` : ''}</div>`
 }
 
 function idsBase(estacion, producto) {
@@ -377,6 +491,9 @@ function inventarioInicialRealBase(estacion, producto) {
 }
 
 function inventarioInicial(estacion, producto) {
+  const inventarioPolaris = inventarioInicialPolaris(estacion, producto)
+  if (inventarioPolaris !== null) return inventarioPolaris
+
   const inventarioDiaBase = inventarioRealDia(estacion, producto, state.fechaBase)
 
   if (inventarioDiaBase) return valorInventarioReal(inventarioDiaBase)
@@ -694,6 +811,7 @@ function inventarioInicialFicticio(estacion, producto, fecha) {
 function esInventarioFicticio(estacion, producto, fecha) {
   const fechaISO = String(fecha || '').slice(0, 10)
   if (!fechaISO || fechaISO !== state.fechaBase) return false
+  if (inventarioInicialPolaris(estacion, producto) !== null) return false
   if (inventarioRealDia(estacion, producto, fechaISO)) return false
   if (inventarioInicialRealBase(estacion, producto) > 0) return false
   return ultimoInventarioRealAntes(estacion, producto, fechaISO) !== null
@@ -1398,7 +1516,7 @@ function inyectarEstilos() {
     }
 
     .param-table {
-      min-width: 900px;
+      min-width: 1040px;
     }
 
     .projection-table {
@@ -1451,6 +1569,52 @@ function inyectarEstilos() {
 
     .producto-chip.DIESEL {
       background: linear-gradient(135deg, #111827, #475569);
+    }
+
+    .tanque-live {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      min-width: 118px;
+      border-radius: 999px;
+      padding: 7px 10px;
+      background: #ecfdf5;
+      color: #047857;
+      border: 1px solid #a7f3d0;
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .tanque-live::before {
+      content: '';
+      width: 7px;
+      height: 7px;
+      border-radius: 999px;
+      background: #22c55e;
+      box-shadow: 0 0 0 3px rgba(34, 197, 94, .14);
+      flex: 0 0 auto;
+    }
+
+    .tanque-live.sin-lectura {
+      background: #f1f5f9;
+      color: #64748b;
+      border-color: #cbd5e1;
+    }
+
+    .tanque-live.sin-lectura::before {
+      background: #94a3b8;
+      box-shadow: none;
+    }
+
+    .polaris-inicial-source {
+      margin-top: 4px;
+      color: #2563eb;
+      font-size: 9px;
+      line-height: 1.1;
+      font-weight: 900;
+      white-space: nowrap;
     }
 
     .promedio-input {
@@ -2056,7 +2220,11 @@ function renderParametros(estacion) {
     return `
       <tr>
         <td><span class="producto-chip ${producto.nombre}">${escaparHTML(producto.nombre)}</span></td>
-        <td class="${valorCero(inventario) ? 'zero-muted' : ''}">${litros(inventario)}</td>
+        <td>${renderTanquePolaris(estacion, producto)}</td>
+        <td class="${valorCero(inventario) ? 'zero-muted' : ''}">
+          <div>${litros(inventario)}</div>
+          ${fuenteInventarioInicialPolaris(estacion, producto)}
+        </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
         <td class="${valorCero(capacidadTanque) ? 'zero-muted' : ''}">${litros(capacidadTanque)}</td>
         <td class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
@@ -2074,6 +2242,7 @@ function renderParametros(estacion) {
           <thead>
             <tr>
               <th>PARÁMETROS</th>
+              <th>Tanque<br>ahora<br><small>EN VIVO</small></th>
               <th>Inventario<br>Inicial<br><small>${fechaBonita(state.fechaBase)}</small></th>
               <th>Promedio<br>de venta</th>
               <th>Capacidad<br>de tanque</th>
@@ -2182,7 +2351,11 @@ function render() {
 }
 
 async function fetchJson(url, options) {
-  const response = await fetch(url, options)
+  const requester = window.ArySqlSource && typeof window.ArySqlSource.nativeFetch === 'function'
+    ? window.ArySqlSource.nativeFetch
+    : window.fetch.bind(window)
+
+  const response = await requester(url, options)
 
   if (!response.ok) {
     let mensaje = 'No se pudo cargar la información'
@@ -2234,6 +2407,124 @@ async function cargarInventariosRango(fechas) {
   return resultados.flat()
 }
 
+async function cargarPolarisSeguro(soloActual = false) {
+  const url = `/api/pipas/polaris/estado?fecha=${encodeURIComponent(state.fechaBase)}&solo_actual=${soloActual ? '1' : '0'}`
+
+  try {
+    const respuesta = await fetchJson(url)
+    return respuesta && typeof respuesta === 'object'
+      ? respuesta
+      : { stations: [], errors: [] }
+  } catch (error) {
+    console.error('ERROR POLARIS PIPAS:', error)
+    return {
+      stations: [],
+      errors: [{ server: '', message: error.message || 'No se pudo consultar Polaris' }]
+    }
+  }
+}
+
+function aplicarRespuestaPolaris(respuesta, soloActual = false) {
+  const nuevas = Array.isArray(respuesta?.stations) ? respuesta.stations : []
+  state.polarisErrores = Array.isArray(respuesta?.errors) ? respuesta.errors : []
+
+  if (!soloActual) {
+    state.polarisEstaciones = nuevas
+    return
+  }
+
+  for (const nueva of nuevas) {
+    const indice = state.polarisEstaciones.findIndex(actual => {
+      if (nueva.server && actual.server === nueva.server) return true
+      if (nueva.no_es && Number(actual.no_es) === Number(nueva.no_es)) return true
+      return normalizarTexto(actual.nombre_estacion) === normalizarTexto(nueva.nombre_estacion)
+    })
+
+    if (indice < 0) {
+      state.polarisEstaciones.push(nueva)
+      continue
+    }
+
+    const anterior = state.polarisEstaciones[indice]
+    const productosAnteriores = Array.isArray(anterior.productos) ? anterior.productos : []
+    const productosNuevos = Array.isArray(nueva.productos) ? nueva.productos : []
+
+    const productos = productosNuevos.map(productoNuevo => {
+      const clave = productoKey(productoNuevo.nombre_producto || '')
+      const productoAnterior = productosAnteriores.find(item => {
+        return productoKey(item.nombre_producto || '') === clave
+      })
+
+      if (!productoAnterior) return productoNuevo
+
+      return {
+        ...productoAnterior,
+        ...productoNuevo,
+        inventario_inicial: productoNuevo.inventario_inicial === null || productoNuevo.inventario_inicial === undefined
+          ? productoAnterior.inventario_inicial
+          : productoNuevo.inventario_inicial,
+        fecha_cierre: productoNuevo.fecha_cierre || productoAnterior.fecha_cierre || null
+      }
+    })
+
+    for (const productoAnterior of productosAnteriores) {
+      const clave = productoKey(productoAnterior.nombre_producto || '')
+      const existe = productos.some(item => productoKey(item.nombre_producto || '') === clave)
+      if (!existe) productos.push(productoAnterior)
+    }
+
+    state.polarisEstaciones[indice] = {
+      ...anterior,
+      ...nueva,
+      productos
+    }
+  }
+}
+
+function actualizarTanquesPolarisDOM() {
+  $('[data-polaris-live-estacion]').forEach(elemento => {
+    const idEstacion = Number(elemento.dataset.polarisLiveEstacion || 0)
+    const claveProducto = productoKey(elemento.dataset.polarisLiveProducto || '')
+    const estacion = estaciones.find(item => Number(item.id_estacion) === idEstacion)
+    const producto = estacion?.productos.find(item => productoKey(item.nombre) === claveProducto)
+
+    if (!estacion || !producto) return
+
+    const actual = tanqueActualPolaris(estacion, producto)
+    elemento.textContent = textoTanquePolaris(estacion, producto)
+    elemento.title = tituloTanquePolaris(estacion, producto)
+    elemento.classList.toggle('sin-lectura', actual === null)
+  })
+}
+
+async function refrescarPolarisEnVivo() {
+  if (document.hidden || state.polarisActualizando) return
+
+  state.polarisActualizando = true
+
+  try {
+    const respuesta = await cargarPolarisSeguro(true)
+    aplicarRespuestaPolaris(respuesta, true)
+    actualizarTanquesPolarisDOM()
+  } catch (error) {
+    console.error('ERROR REFRESCO POLARIS:', error)
+  } finally {
+    state.polarisActualizando = false
+  }
+}
+
+function iniciarRefrescoPolaris() {
+  if (polarisLiveTimer) clearInterval(polarisLiveTimer)
+
+  polarisLiveTimer = setInterval(() => {
+    refrescarPolarisEnVivo()
+  }, POLARIS_LIVE_REFRESH_MS)
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refrescarPolarisEnVivo()
+  })
+}
+
 async function cargarDatos() {
   state.cargando = true
 
@@ -2249,17 +2540,19 @@ async function cargarDatos() {
     const fechaInicioCompras = fechaInicioInventarios
     const urlCompras = `/api/pipas/compras?fecha_inicio=${encodeURIComponent(fechaInicioCompras)}&fecha_fin=${encodeURIComponent(state.fechaFin)}`
 
-    const [inventarios, inventariosRango, promedios, compras] = await Promise.all([
+    const [inventarios, inventariosRango, promedios, compras, polaris] = await Promise.all([
       cargarListaSegura('INVENTARIOS', urlInventarios),
       cargarInventariosRango(fechasInventario),
       cargarListaSegura('PROMEDIOS', urlPromedios),
-      cargarListaSegura('COMPRAS', urlCompras)
+      cargarListaSegura('COMPRAS', urlCompras),
+      cargarPolarisSeguro(false)
     ])
 
     state.inventarios = inventarios
     state.inventariosRango = inventariosRango
     state.promedios = promedios
     state.compras = compras
+    aplicarRespuestaPolaris(polaris, false)
 
     render()
 
@@ -3740,6 +4033,7 @@ async function iniciarPipas() {
   enlazarEventos()
   render()
   await cargarDatos()
+  iniciarRefrescoPolaris()
 }
 
 if (document.readyState === 'loading') {
