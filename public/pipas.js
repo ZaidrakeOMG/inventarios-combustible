@@ -830,7 +830,13 @@ function saldoProyectado(estacion, producto, fecha) {
     const compraAplicada = compraDiaAplicada(estacion, producto, fechaActual, inventarioDia)
 
     if (index === 0) {
-      const base = inventarioDia ? valorInventarioReal(inventarioDia) : inventarioInicial(estacion, producto)
+      const inventarioPolaris = inventarioInicialPolaris(estacion, producto)
+      const base = inventarioPolaris !== null
+        ? inventarioPolaris
+        : inventarioDia
+          ? valorInventarioReal(inventarioDia)
+          : inventarioInicial(estacion, producto)
+
       saldo = base + compraAplicada
       return
     }
@@ -2482,7 +2488,7 @@ function aplicarRespuestaPolaris(respuesta, soloActual = false) {
 }
 
 function actualizarTanquesPolarisDOM() {
-  $('[data-polaris-live-estacion]').forEach(elemento => {
+  document.querySelectorAll('[data-polaris-live-estacion]').forEach(elemento => {
     const idEstacion = Number(elemento.dataset.polarisLiveEstacion || 0)
     const claveProducto = productoKey(elemento.dataset.polarisLiveProducto || '')
     const estacion = estaciones.find(item => Number(item.id_estacion) === idEstacion)
@@ -2557,6 +2563,15 @@ async function cargarDatos() {
     render()
 
     if (!state.inventarios.length) {
+      const hayInventarioPolaris = estaciones.some(estacion => {
+        return estacion.productos.some(producto => inventarioInicialPolaris(estacion, producto) !== null)
+      })
+
+      if (hayInventarioPolaris) {
+        notify(`Proyección cargada desde cierres de Polaris para ${fechaBonita(state.fechaBase)}`)
+        return
+      }
+
       const hayInventarioFicticio = estaciones.some(estacion => {
         return estacion.productos.some(producto => esInventarioFicticio(estacion, producto, state.fechaBase))
       })
