@@ -71,12 +71,14 @@ h1 {
 }
 
 input,
+select,
 button {
   font: inherit;
   font-weight: 400;
 }
 
-input {
+input,
+select {
   border: 1px solid #cbd5e1;
   background: #fff;
   border-radius: 12px;
@@ -86,9 +88,14 @@ input {
   font-weight: 400;
 }
 
-input:focus {
+input:focus,
+select:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 4px rgba(37, 99, 235, .12);
+}
+
+select {
+  min-width: 180px;
 }
 
 button {

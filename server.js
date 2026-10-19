@@ -18,7 +18,8 @@ const SSL_ENABLED = ['1', 'true', 'yes', 'si', 'sí'].includes(String(process.en
 const SSL_KEY_PATH = process.env.SSL_KEY_PATH || ''
 const SSL_CERT_PATH = process.env.SSL_CERT_PATH || ''
 
-let pool
+const sqlPools = new Map()
+const sqlPoolPromises = new Map()
 let schemaReady = false
 
 function getLocalIp() {
@@ -54,6 +55,119 @@ const dbConfig = {
     min: 0,
     idleTimeoutMillis: 30000
   }
+}
+
+const DEFAULT_SQL_SERVERS = Object.freeze([
+  '10.20.20.51',
+  '10.20.20.61',
+  '10.20.20.63',
+  '10.20.20.59',
+  '10.20.20.65',
+  '10.20.20.67',
+  '10.20.20.70'
+])
+
+const SQL_SERVERS = [...new Set(
+  String(process.env.SQL_SERVERS || DEFAULT_SQL_SERVERS.join(','))
+    .split(',')
+    .map(value => value.trim())
+    .filter(Boolean)
+)]
+
+const REMOTE_SQL_PORT = Number.parseInt(process.env.REMOTE_SQL_PORT || process.env.SQL_PORT, 10) || 1433
+const REMOTE_SQL_USER = process.env.REMOTE_SQL_USER || process.env.SQL_USER || 'sa'
+const REMOTE_SQL_PASSWORD = process.env.REMOTE_SQL_PASSWORD || process.env.SQL_PASSWORD || ''
+const REMOTE_SQL_DATABASE = process.env.REMOTE_SQL_DATABASE || process.env.SQL_DATABASE || ''
+const REMOTE_SQL_CONNECTION_TIMEOUT = Number.parseInt(process.env.REMOTE_SQL_CONNECTION_TIMEOUT, 10) || 5000
+
+function sqlTargetFromRequest(req) {
+  return {
+    server: String(
+      req?.headers?.['x-sql-server'] ||
+      req?.query?.sql_server ||
+      req?.body?.sql_server ||
+      ''
+    ).trim(),
+    database: String(
+      req?.headers?.['x-sql-database'] ||
+      req?.query?.sql_database ||
+      req?.body?.sql_database ||
+      ''
+    ).trim()
+  }
+}
+
+function validarServidorSql(server) {
+  if (!SQL_SERVERS.includes(server)) {
+    throw new Error('Servidor SQL no autorizado')
+  }
+}
+
+function remoteDbConfig(server, database) {
+  return {
+    ...dbConfig,
+    server,
+    port: REMOTE_SQL_PORT,
+    database,
+    user: REMOTE_SQL_USER,
+    password: REMOTE_SQL_PASSWORD,
+    connectionTimeout: REMOTE_SQL_CONNECTION_TIMEOUT
+  }
+}
+
+async function getOrCreatePool(config, key) {
+  const existente = sqlPools.get(key)
+
+  if (existente?.connected) {
+    return existente
+  }
+
+  if (sqlPoolPromises.has(key)) {
+    return sqlPoolPromises.get(key)
+  }
+
+  const promise = (async () => {
+    if (existente) {
+      try {
+        await existente.close()
+      } catch (_) {}
+
+      sqlPools.delete(key)
+    }
+
+    const nuevoPool = new sql.ConnectionPool(config)
+
+    nuevoPool.on('error', error => {
+      console.log(`ERROR POOL SQL ${key}:`, error.message)
+      sqlPools.delete(key)
+    })
+
+    await nuevoPool.connect()
+    sqlPools.set(key, nuevoPool)
+
+    return nuevoPool
+  })()
+
+  sqlPoolPromises.set(key, promise)
+
+  try {
+    return await promise
+  } finally {
+    sqlPoolPromises.delete(key)
+  }
+}
+
+async function getRemotePool(server, database = REMOTE_SQL_DATABASE || 'master') {
+  validarServidorSql(server)
+
+  if (!REMOTE_SQL_USER || !REMOTE_SQL_PASSWORD) {
+    throw new Error('Faltan REMOTE_SQL_USER o REMOTE_SQL_PASSWORD en el archivo .env')
+  }
+
+  const db = String(database || '').trim() || 'master'
+  const key = `remote:${server}:${REMOTE_SQL_PORT}:${db}`
+
+  return getOrCreatePool(remoteDbConfig(server, db), key)
 }
 
 function obtenerRutaLogo() {
@@ -145,18 +259,28 @@ function proximoLunes(fechaISOValor) {
 async function ensureSchema(p) {
   schemaReady = true
 }
-async function getPool() {
+async function getPool(req) {
   try {
+    const target = sqlTargetFromRequest(req)
+
+    if (target.server) {
+      const database = target.database || REMOTE_SQL_DATABASE
+
+      if (!database) {
+        throw new Error('No se seleccionó una base de datos para el servidor remoto')
+      }
+
+      const p = await getRemotePool(target.server, database)
+      console.log(`SQL remoto conectado: ${target.server} / ${database}`)
+      return p
+    }
+
     if (!process.env.SQL_SERVER || !process.env.SQL_DATABASE || !process.env.SQL_USER || !process.env.SQL_PASSWORD) {
       throw new Error('Faltan datos de conexión SQL en el archivo .env')
     }
 
-    if (!pool) {
-      pool = await sql.connect(dbConfig)
-      console.log('SQL Server conectado correctamente')
-    }
-
-    return pool
+    const key = `principal:${dbConfig.server}:${dbConfig.port}:${dbConfig.database}`
+    return getOrCreatePool(dbConfig, key)
   } catch (error) {
     console.log('ERROR CONEXION SQL:', error.message)
     throw error
@@ -232,9 +356,54 @@ app.get('/api/health', async (req, res) => {
   })
 })
 
+app.get('/api/sql-servidores', (req, res) => {
+  res.json({
+    ok: true,
+    central: {
+      server: process.env.SQL_SERVER || '',
+      database: process.env.SQL_DATABASE || ''
+    },
+    servers: SQL_SERVERS,
+    preferred_database: REMOTE_SQL_DATABASE || ''
+  })
+})
+
+app.get('/api/sql-servidores/bases', async (req, res) => {
+  try {
+    const server = String(req.query.server || '').trim()
+
+    if (!server) {
+      throw new Error('No se recibió el servidor SQL')
+    }
+
+    const p = await getRemotePool(server, 'master')
+    const result = await crearRequestPool(p).query(`
+      SELECT name
+      FROM sys.databases
+      WHERE database_id > 4
+        AND state_desc = 'ONLINE'
+      ORDER BY name
+    `)
+
+    res.json({
+      ok: true,
+      server,
+      databases: result.recordset.map(row => row.name),
+      preferred_database: REMOTE_SQL_DATABASE || ''
+    })
+  } catch (error) {
+    console.log('ERROR LISTANDO BASES SQL:', error.message)
+
+    res.status(500).json({
+      ok: false,
+      message: error.message
+    })
+  }
+})
+
 app.get('/api/health-sql', async (req, res) => {
   try {
-    const p = await getPool()
+    const p = await getPool(req)
     const requestHealth = crearRequestPool(p)
     const result = await requestHealth.query('SELECT 1 AS ok')
 
@@ -255,7 +424,7 @@ app.get('/api/health-sql', async (req, res) => {
 
 app.get('/api/estaciones', async (req, res) => {
   try {
-    const p = await getPool()
+    const p = await getPool(req)
 
     const result = await p.request().query(`
       SELECT
@@ -279,7 +448,7 @@ app.get('/api/estaciones', async (req, res) => {
 
 app.get('/api/productos', async (req, res) => {
   try {
-    const p = await getPool()
+    const p = await getPool(req)
 
     const result = await p.request().query(`
       SELECT
@@ -310,7 +479,7 @@ app.get('/api/productos', async (req, res) => {
 app.get('/api/inventarios', async (req, res) => {
   try {
     const fecha = req.query.fecha || new Date().toISOString().slice(0, 10)
-    const p = await getPool()
+    const p = await getPool(req)
 
     console.log('Consultando inventarios fecha:', fecha)
 
@@ -514,7 +683,7 @@ app.post('/api/inventarios/precio-confirmado', async (req, res) => {
       throw new Error('Faltan datos para guardar la confirmación del precio')
     }
 
-    const p = await getPool()
+    const p = await getPool(req)
 
     const result = await crearRequestPool(p)
       .input('fecha', sql.Date, fecha)
@@ -585,7 +754,7 @@ app.post('/api/inventarios/guardar', async (req, res) => {
       throw new Error('No se recibió la fecha del inventario')
     }
 
-    const p = await getPool()
+    const p = await getPool(req)
     transaction = new sql.Transaction(p)
 
     await transaction.begin()
@@ -931,7 +1100,7 @@ const preciosParaGuardar = hayPrecioDetalleCapturado
 app.get('/api/pipas/promedios', async (req, res) => {
   try {
     const fecha = req.query.fecha || new Date().toISOString().slice(0, 10)
-    const p = await getPool()
+    const p = await getPool(req)
 
     const result = await p.request()
       .input('fecha', sql.Date, fecha)
@@ -1009,7 +1178,7 @@ app.post('/api/pipas/promedios', async (req, res) => {
       throw new Error('No se recibió la fecha')
     }
 
-    const p = await getPool()
+    const p = await getPool(req)
     let guardados = 0
     let bloqueados = 0
 
@@ -1153,7 +1322,7 @@ app.get('/api/pipas/compras', async (req, res) => {
     const fecha = req.query.fecha || ''
     const fechaInicio = req.query.fecha_inicio || req.query.desde || fecha || new Date().toISOString().slice(0, 10)
     const fechaFin = req.query.fecha_fin || req.query.hasta || (fecha ? proximoLunes(fechaInicio) : fechaInicio)
-    const p = await getPool()
+    const p = await getPool(req)
 
     const result = await p.request()
       .input('fecha_inicio', sql.Date, fechaInicio)
@@ -1211,7 +1380,7 @@ app.post('/api/pipas/compras', async (req, res) => {
       throw new Error('No se recibió estación o producto')
     }
 
-    const p = await getPool()
+    const p = await getPool(req)
 
     if (litrosCompra <= 0) {
       await p.request()
@@ -1307,7 +1476,7 @@ app.get('/api/costos/compras', async (req, res) => {
     const excluirIdEstacion = Number(req.body?.excluir_id_estacion || req.query?.excluir_id_estacion || 0)
     const excluirIdProducto = Number(req.body?.excluir_id_producto || req.query?.excluir_id_producto || 0)
 
-    const p = await getPool()
+    const p = await getPool(req)
     const requestCostos = crearRequestPool(p)
 
     requestCostos.timeout = 300000
@@ -1751,7 +1920,7 @@ app.all('/api/costos/recalcular', async (req, res) => {
       })
     }
 
-    const p = await getPool()
+    const p = await getPool(req)
     const requestCostos = crearRequestPool(p)
 
     requestCostos.timeout = 300000

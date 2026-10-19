@@ -13,6 +13,120 @@ const fechaTexto = $('#fechaTexto')
 const toast = $('#toast')
 const LOGO_SRC = '/imagenes/ary.logo.png'
 
+const sqlServerSelect = $('#sqlServer')
+const sqlDatabaseSelect = $('#sqlDatabase')
+
+async function cargarBasesSql(server) {
+  if (!sqlDatabaseSelect) return
+
+  const seleccionPrevia = window.ArySqlSource?.getSelection() || { server: '', database: '' }
+  const databaseGuardada = seleccionPrevia.server === server ? seleccionPrevia.database : ''
+
+  if (!server) {
+    sqlDatabaseSelect.disabled = true
+    sqlDatabaseSelect.innerHTML = '<option value="">Base central</option>'
+
+    if (window.ArySqlSource) {
+      window.ArySqlSource.setSelection('', '')
+    }
+
+    return
+  }
+
+  sqlDatabaseSelect.disabled = true
+  sqlDatabaseSelect.innerHTML = '<option value="">Buscando bases...</option>'
+
+  if (window.ArySqlSource) {
+    window.ArySqlSource.setSelection(server, '')
+  }
+
+  const response = await fetch(`/api/sql-servidores/bases?server=${encodeURIComponent(server)}&t=${Date.now()}`, {
+    cache: 'no-store'
+  })
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || `No se pudo conectar a ${server}`)
+  }
+
+  const databases = Array.isArray(data.databases) ? data.databases : []
+
+  if (!databases.length) {
+    throw new Error(`No se encontraron bases de datos disponibles en ${server}`)
+  }
+
+  sqlDatabaseSelect.innerHTML = databases
+    .map(database => `<option value="${escaparHTML(database)}">${escaparHTML(database)}</option>`)
+    .join('')
+
+  const preferida = databaseGuardada && databases.includes(databaseGuardada)
+    ? databaseGuardada
+    : (data.preferred_database && databases.includes(data.preferred_database)
+        ? data.preferred_database
+        : databases[0])
+
+  sqlDatabaseSelect.value = preferida
+  sqlDatabaseSelect.disabled = false
+
+  if (window.ArySqlSource) {
+    window.ArySqlSource.setSelection(server, preferida)
+  }
+}
+
+async function inicializarSelectorSql() {
+  if (!sqlServerSelect || !sqlDatabaseSelect) return
+
+  const response = await fetch('/api/sql-servidores', { cache: 'no-store' })
+  const data = await response.json().catch(() => ({}))
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.message || 'No se pudieron cargar los servidores SQL')
+  }
+
+  const servers = Array.isArray(data.servers) ? data.servers : []
+  const centralTexto = data.central?.server
+    ? `Base central (${data.central.server})`
+    : 'Base central'
+
+  sqlServerSelect.innerHTML = [
+    `<option value="">${escaparHTML(centralTexto)}</option>`,
+    ...servers.map(server => `<option value="${escaparHTML(server)}">${escaparHTML(server)}</option>`)
+  ].join('')
+
+  const seleccionGuardada = window.ArySqlSource?.getSelection() || { server: '', database: '' }
+  const serverGuardado = servers.includes(seleccionGuardada.server) ? seleccionGuardada.server : ''
+
+  sqlServerSelect.value = serverGuardado
+  await cargarBasesSql(serverGuardado)
+
+  sqlServerSelect.addEventListener('change', async () => {
+    try {
+      const server = sqlServerSelect.value
+
+      if (window.ArySqlSource) {
+        window.ArySqlSource.setSelection(server, '')
+      }
+
+      await cargarBasesSql(server)
+      await cargar({ forzar: true })
+    } catch (error) {
+      notify(error.message || 'No se pudo cambiar de servidor SQL')
+    }
+  })
+
+  sqlDatabaseSelect.addEventListener('change', async () => {
+    try {
+      if (window.ArySqlSource) {
+        window.ArySqlSource.setSelection(sqlServerSelect.value, sqlDatabaseSelect.value)
+      }
+
+      await cargar({ forzar: true })
+    } catch (error) {
+      notify(error.message || 'No se pudo cambiar de base de datos')
+    }
+  })
+}
+
 function crearMenuLateral() {
   if (document.querySelector('#menuLateralInventarios')) return
 
@@ -2880,7 +2994,9 @@ if (!window.__inventarioAutoRefreshMultiPc) {
   }, 8000)
 }
 
-cargar().catch(error => notify(error.message))
+inicializarSelectorSql()
+  .catch(error => notify(error.message))
+  .finally(() => cargar().catch(error => notify(error.message)))
 
 
 

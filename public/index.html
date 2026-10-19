@@ -20,6 +20,12 @@
       </div>
 
       <div class="actions">
+        <select id="sqlServer" title="Servidor SQL">
+          <option value="">Base central</option>
+        </select>
+        <select id="sqlDatabase" title="Base de datos" disabled>
+          <option value="">Base central</option>
+        </select>
         <input type="date" id="fecha">
         <div id="fechaTexto" class="fecha-texto"></div>
         <button id="btnCargar" type="button">Cargar</button>
@@ -34,6 +40,7 @@
 
   <div id="toast"></div>
 
-  <script src="app.js?v=20260703-2"></script>
+  <script src="sql-source.js?v=20261019-1"></script>
+  <script src="app.js?v=20261019-1"></script>
 </body>
 </html>
