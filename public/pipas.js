@@ -2617,6 +2617,14 @@ function renderProyeccion(estacion) {
       const inventarioDiaAplicacion = inventarioRealDia(estacion, producto, fechaAplicacionCompra)
       const compraSeSumaDiaSiguiente = compra > 0 && compraCuentaEnSaldo(fecha, fechaAplicacionCompra, inventarioDiaAplicacion)
       const textoCompra = compraSeSumaDiaSiguiente ? 'Si llega mañana, se suman' : 'Compra pendiente de validar'
+      const idsCompra = obtenerIds(estacion, producto)
+      const esCompraAutomatica = state.compras.some(item =>
+        String(item.fecha_compra).slice(0, 10) === fecha &&
+        Number(item.id_estacion) === idsCompra.id_estacion &&
+        Number(item.id_producto) === idsCompra.id_producto &&
+        /^(automática:|programación preventiva|proyección de inventario real)/i
+          .test(String(item.observaciones || '').trim())
+      )
 
       return `
         <td>
@@ -2627,7 +2635,7 @@ function renderProyeccion(estacion) {
               data-proyeccion-fecha="${fecha}"
               title="${escaparHTML(tituloSaldoProyectado(estacion, producto, fecha))}">${litros(saldo)}</div>
             ${renderCompraInput(estacion, producto, fecha)}
-            ${compra > 0 ? `<small>${textoCompra}: ${litros(compra)}</small>` : ''}
+            ${compra > 0 ? `<small>${esCompraAutomatica ? 'Automática · ' : ''}${textoCompra}: ${litros(compra)}</small>` : ''}
           </div>
         </td>
       `
@@ -2652,7 +2660,7 @@ function renderProyeccion(estacion) {
         <h3 class="table-title">Proyección al cierre · ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
         <button class="week-nav" type="button" data-week-nav="7">Semana siguiente ▶</button>
       </div>
-      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Inventario inicial: cierre contable anterior. Desde hoy, los cierres se proyectan con Polaris vigente y ventas de 7 días; sin sensor válido, se muestra un respaldo contable. Las compras D+1 son entradas estimadas, NO confirmadas.</small>
+      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Inventario inicial: cierre contable anterior. Desde hoy, los cierres se proyectan con Polaris vigente y ventas de 7 días; sin sensor válido, se muestra un respaldo contable. Las compras D+1 son entradas estimadas, NO confirmadas. Para quitar una programación anterior, deja vacía su casilla Compra.</small>
       <div class="table-wrap">
         <table class="projection-table">
           <thead>
@@ -3248,22 +3256,19 @@ async function programarPipaAutomatica() {
       return
     }
 
-    // Confirmación compacta. El detalle técnico se deja en consola y los
-    // pedidos se reflejan en las casillas de la tabla, no en un bloque gigante.
-    const agrupadas = new Map()
-    for (const item of propuesta.candidatos) {
-      const nombre = item.estacion.nombre
-      agrupadas.set(nombre, (agrupadas.get(nombre) || 0) + 1)
-    }
-    const resumenEstaciones = [...agrupadas]
-      .map(([nombre, cantidad]) => nombre + ': ' + cantidad + ' pipa(s)')
-      .join('\n')
+    // Vista previa por fecha y combustible: nunca aceptar un lote "a ciegas".
+    const vista = propuesta.candidatos.map(item =>
+      item.estacion.nombre + ' / ' + item.producto.nombre + ': ' +
+      fechaBonita(item.fecha) + ' (entrega aprox. ' + fechaBonita(item.entrega) + ')' +
+      ' · reorden ' + litros(item.puntoReorden) + ' L'
+    )
     const confirmar = window.confirm(
-      'Se propone programar ' + propuesta.candidatos.length +
-      ' pipas de 20,000 L (' + litros(propuesta.candidatos.length * PIPA_AUTOMATICA_LITROS) +
-      ' L en total) considerando los puntos de reorden y compras existentes.\n\n' +
-      resumenEstaciones +
-      '\n\nLa entrega al día siguiente es estimada. NO se enviará ningún pedido al proveedor. ¿Guardar?'
+      'PRÓXIMAS COMPRAS SUGERIDAS (una por combustible)\n\n' +
+      vista.join('\n') + '\n\n' +
+      'Total: ' + propuesta.candidatos.length + ' pipa(s) de 20,000 L.\n' +
+      'No se programan las siguientes entregas del mismo combustible hasta ' +
+      'volver a revisar las lecturas y las compras pendientes.\n\n' +
+      'Las fechas D+1 son estimadas y NO se envían pedidos al proveedor. ¿Guardar estas propuestas?'
     )
     if (!confirmar) {
       notify('Programación cancelada')
