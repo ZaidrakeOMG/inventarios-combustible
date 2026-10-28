@@ -8,6 +8,7 @@ const COLOR_EXPORT_GRIS = '#d9d9d9'
 const POLARIS_LIVE_REFRESH_MS = 15000
 const PIPA_AUTOMATICA_LITROS = 20000
 const PIPA_DIAS_COLCHON = 1.5
+const POLARIS_MAP_STORAGE_KEY = 'pipas_polaris_estaciones_verificadas_v1'
 
 const estaciones = [
   {
@@ -98,6 +99,7 @@ const state = {
   cargando: false,
   historialSemanas: [],
   polarisEstaciones: [],
+  polarisMap: cargarMapaPolaris(),
   polarisErrores: [],
   polarisConsultaEn: '',
   polarisActualizando: false,
@@ -235,6 +237,8 @@ function productoKey(nombre) {
 
 function numberValue(value) {
   if (value === null || value === undefined || value === '') return 0
+  // SQL Server envía los DECIMAL como Number. No confundir 731.286 con 731,286.
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
 
   let limpio = String(value).trim().replace(/\s+/g, '')
   if (!limpio) return 0
@@ -272,6 +276,16 @@ function numberValue(value) {
 
   const n = Number(limpio)
   return Number.isFinite(n) ? n : 0
+}
+
+// Los decimales serializados desde SQL son números, no separadores de miles.
+// No aplicar esta conversión a campos de entrada editables del usuario.
+function numeroSql(valor) {
+  if (typeof valor === 'string' && /^-?\d+(?:\.\d+)?$/.test(valor.trim())) {
+    const numero = Number(valor.trim())
+    return Number.isFinite(numero) ? numero : 0
+  }
+  return numberValue(valor)
 }
 
 function formatoNumero(n, decimales = 0) {
@@ -332,15 +346,44 @@ function notify(message) {
 }
 
 function estacionCoincide(row, estacion) {
-  // No usar startsWith: ARY I es prefijo de ARY II/III/IV y
-  // mostraba el mismo tanque/capacidad en estaciones diferentes.
+  // No usar startsWith: ARY I es prefijo de ARY II/III/IV.
   const nombre = normalizarTexto(row.nombre_estacion || row.estacion || row.estacion_nombre || '')
   return !!nombre && estacion.aliases.some(alias => normalizarTexto(alias) === nombre)
 }
 
+function cargarMapaPolaris() {
+  try {
+    const guardado = JSON.parse(localStorage.getItem(POLARIS_MAP_STORAGE_KEY) || '{}')
+    if (!guardado || Array.isArray(guardado) || typeof guardado !== 'object') return {}
+    return guardado
+  } catch (_) {
+    return {}
+  }
+}
+
+function claveServidorPolaris(row) {
+  const server = String(row?.server || '').trim()
+  const noEs = Number(row?.no_es)
+  return server && Number.isSafeInteger(noEs) && noEs > 0 ? server + '|' + noEs : ''
+}
+
+function estacionPolarisCoincide(row, estacion) {
+  const clave = claveServidorPolaris(row)
+  if (clave && Object.prototype.hasOwnProperty.call(state.polarisMap, clave)) {
+    return Number(state.polarisMap[clave]) === Number(estacion.id_estacion)
+  }
+  // Emparejamiento automático solo si el nombre Polaris coincide EXACTAMENTE.
+  return estacionCoincide(row, estacion)
+}
+
+function estacionPolarisAsignada(row) {
+  const asignadas = estaciones.filter(estacion => estacionPolarisCoincide(row, estacion))
+  return asignadas.length === 1 ? asignadas[0] : null
+}
+
 function buscarEstacionPolaris(estacion) {
-  const coincidencias = state.polarisEstaciones.filter(row => estacionCoincide(row, estacion))
-  // No asignar arbitrariamente la primera base si dos servidores declaran la misma estación.
+  const coincidencias = state.polarisEstaciones.filter(row => estacionPolarisCoincide(row, estacion))
+  // En caso de conflicto no se devuelve ninguna lectura, nunca la primera al azar.
   return coincidencias.length === 1 ? coincidencias[0] : null
 }
 
@@ -356,7 +399,7 @@ function buscarProductoPolaris(estacion, producto) {
 }
 
 function estadoLecturaPolaris(estacion, producto) {
-  const coincidencias = state.polarisEstaciones.filter(row => estacionCoincide(row, estacion))
+  const coincidencias = state.polarisEstaciones.filter(row => estacionPolarisCoincide(row, estacion))
   if (coincidencias.length > 1) return 'duplicada'
   const lectura = buscarProductoPolaris(estacion, producto)
   return lectura ? String(lectura.estado_lectura || 'no_verificada') : 'sin_lectura'
@@ -462,14 +505,17 @@ function renderTanquePolaris(estacion, producto) {
     escaparHTML(textoFechaTanquePolaris(estacion, producto)) + '</small></div>'
 }
 
-function tituloCapacidadTanque(estacion, producto) {
+function etiquetaCapacidadTanque(estacion, producto) {
   const capacidad = capacidadTanquePolaris(estacion, producto)
+  if (!(capacidad > 0)) return 'RESPALDO'
+  return lecturaVigentePolaris(estacion, producto) ? 'POLARIS VIGENTE' : 'POLARIS SIN VERIFICAR'
+}
+
+function tituloCapacidadTanque(estacion, producto) {
   const row = buscarProductoPolaris(estacion, producto)
-  const origen = capacidad !== null && capacidad > 0
-    ? 'Capacidad desde Polaris en vivo'
-    : 'Capacidad de respaldo configurada (sin lectura vigente de Polaris)'
+  const etiqueta = etiquetaCapacidadTanque(estacion, producto)
   const tanques = Number(row?.numero_tanques || 0)
-  return origen + (tanques > 0 ? ' · ' + tanques + ' tanque(s)' : '')
+  return etiqueta + (tanques > 0 ? ' · ' + tanques + ' tanque(s)' : '')
 }
 
 function fuenteInventarioInicial(estacion, producto) {
@@ -587,7 +633,7 @@ function inventarioRealDia(estacion, producto, fecha) {
 
 function promedioVenta(estacion, producto) {
   const row = buscarPromedio(estacion, producto)
-  return row ? numberValue(row.promedio_venta) : 0
+  return row ? numeroSql(row.promedio_venta) : 0
 }
 
 function fuentePromedio(estacion, producto) {
@@ -1686,6 +1732,49 @@ function inyectarEstilos() {
       background: #fff7ed;
       color: #9a3412;
     }
+    .polaris-asignaciones {
+      margin: 0 0 15px;
+      padding: 9px 15px;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      background: #fff;
+      color: #334155;
+      font-size: 12px;
+    }
+    .polaris-asignaciones summary {
+      cursor: pointer;
+      font-weight: 850;
+      color: #1d4ed8;
+      padding: 5px 0;
+    }
+    .polaris-asignaciones p { line-height: 1.55; margin: 9px 0 12px; }
+    .polaris-asignaciones .polaris-map-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+      gap: 9px;
+      padding-bottom: 8px;
+    }
+    .polaris-asignaciones .polaris-map-row {
+      display: grid;
+      gap: 6px;
+      padding: 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+    .polaris-map-row label { font-weight: 700; line-height: 1.5; }
+    .polaris-map-row small { color: #64748b; }
+    .polaris-map-row select {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: white;
+      color: #0f172a;
+      width: 100%;
+      padding: 9px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .polaris-map-row.sin-vincular { border-color: #fdba74; background: #fff7ed; }
 
     .polaris-inicial-source {
       margin-top: 4px;
@@ -2210,6 +2299,7 @@ function crearLayout() {
       </header>
 
       <div id="pipasConexiones" class="pipas-conexiones" role="status">Consultando tanques de las estaciones...</div>
+      <div id="polarisAsignaciones" class="polaris-asignaciones"></div>
       <div id="pipaAutomaticaResultado" class="pipa-auto-info" role="status" hidden></div>
       <main class="station-grid" id="contenedorPipas"></main>
     </div>
@@ -2282,7 +2372,7 @@ function renderPromedioInput(estacion, producto) {
   const row = buscarPromedio(estacion, producto)
   const valor = promedioVenta(estacion, producto)
   const fechas = row ? `${row.fecha_inicio_ventas || ''} al ${row.fecha_fin_ventas || ''}` : 'Sin período disponible'
-  const detalle = `Ventas de Inventarios Combustibles: ${fechas}. Total: ${litros(row?.total_ventas_7_dias || 0)} L / 7 días. Promedio: ${formatoNumero(valor, 2)} L/día.`
+  const detalle = `Ventas de Inventarios Combustibles: ${fechas}. Total: ${litros(numeroSql(row?.total_ventas_7_dias || 0))} L / 7 días. Promedio: ${formatoNumero(valor, 2)} L/día.`
   return `
     <input class="promedio-input ${valorCero(valor) ? 'zero-muted' : ''}" type="text" readonly value="${litros(valor)}" title="${escaparHTML(detalle)}" aria-label="Promedio automático de los últimos 7 días">
     <div class="source-badge ${claseFuente(estacion, producto)}" title="${escaparHTML(detalle)}">${textoFuente(estacion, producto)}</div>
@@ -2305,7 +2395,7 @@ function renderParametros(estacion) {
           ${fuenteInventarioInicial(estacion, producto)}
         </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
-        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" data-fuente="${capacidadTanquePolaris(estacion, producto) > 0 ? 'POLARIS EN VIVO' : 'RESPALDO'}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${capacidadTanquePolaris(estacion, producto) > 0 ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
+        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" data-fuente="${etiquetaCapacidadTanque(estacion, producto)}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${lecturaVigentePolaris(estacion, producto) ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
         <td data-tanque-param="fondaje" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
         <td class="${valorCero(producto.punto_reorden) ? 'zero-muted' : ''}">${litros(producto.punto_reorden)}</td>
         <td data-tanque-param="maxima" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
@@ -2512,17 +2602,109 @@ function aplicarRespuestaPolaris(respuesta, soloActual = false) {
   mostrarEstadoConexionesPolaris()
 }
 
+function renderAsignacionesPolaris() {
+  const elemento = $('#polarisAsignaciones')
+  if (!elemento) return
+  const sinAsignar = state.polarisEstaciones.filter(row => !estacionPolarisAsignada(row))
+  const firma = JSON.stringify({
+    estaciones: state.polarisEstaciones.map(row =>
+      [row.server, row.no_es, row.nombre_estacion]),
+    mapa: state.polarisMap
+  })
+  if (elemento.dataset.firma === firma) return
+  const detallesAnteriores = elemento.querySelector('details')
+  const abierto = detallesAnteriores ? detallesAnteriores.open : sinAsignar.length > 0
+
+  const opciones = estacion =>
+    '<option value="' + estacion.id_estacion + '">' + escaparHTML(estacion.nombre) + '</option>'
+
+  const filas = state.polarisEstaciones.map(row => {
+    const asignada = estacionPolarisAsignada(row)
+    const clave = claveServidorPolaris(row)
+    const seleccionada = asignada?.id_estacion || 0
+    const options = '<option value="0">— Sin vincular —</option>' + estaciones.map(opciones).join('')
+    const nombre = row.nombre_estacion || 'Nombre no disponible'
+    const noEs = Number(row.no_es) || 'N/D'
+    const descrip = String(row.server || 'Servidor sin nombre') + ' · NoES ' + noEs
+    return '<div class="polaris-map-row' + (asignada ? '' : ' sin-vincular') + '">' +
+      '<label>' + escaparHTML(descrip) + '<br><small>Polaris: ' +
+      escaparHTML(nombre) + '</small></label>' +
+      '<select data-polaris-map="' + escaparHTML(clave) + '" aria-label="Estación correspondiente a ' +
+      escaparHTML(descrip) + '"' + (clave ? '' : ' disabled') + '>' +
+      options.replace('value="' + seleccionada + '"',
+        'value="' + seleccionada + '" selected') + '</select>' +
+      '</div>'
+  }).join('')
+
+  elemento.innerHTML = '<details' + (abierto ? ' open' : '') + '>' +
+    '<summary>Vincular estaciones de Polaris (' +
+    (state.polarisEstaciones.length - sinAsignar.length) + '/' +
+    state.polarisEstaciones.length + ' identificadas)</summary>' +
+    '<p>Las bases responden, pero sus nombres pueden ser distintos. Selecciona la estación correcta para cada ' +
+    'servidor y NoES, comprobando que corresponda físicamente. Se guarda en este navegador. ' +
+    'Nunca se relacionan estaciones por orden o por similitud de nombre.</p>' +
+    '<div class="polaris-map-grid">' + (filas || '<p>No hay servidores Polaris disponibles.</p>') +
+    '</div></details>'
+  elemento.dataset.firma = firma
+}
+
+function guardarAsignacionPolaris(select) {
+  const clave = String(select?.dataset?.polarisMap || '')
+  const estacionId = Number(select?.value || 0)
+  if (!clave || !state.polarisEstaciones.some(row => claveServidorPolaris(row) === clave)) return
+  if (!Number.isSafeInteger(estacionId) ||
+      (estacionId && !estaciones.some(row => row.id_estacion === estacionId))) {
+    notify('Estación inválida')
+    return
+  }
+
+  if (estacionId) {
+    const destino = estaciones.find(row => row.id_estacion === estacionId)
+    const conflicto = state.polarisEstaciones.some(row =>
+      claveServidorPolaris(row) !== clave && estacionPolarisCoincide(row, destino))
+    if (conflicto) {
+      notify('Esa estación ya está vinculada a otro servidor. Revisa las asignaciones.')
+      select.value = String(state.polarisMap[clave] || 0)
+      return
+    }
+  }
+
+  // Guardar incluso cero para permitir desvincular nombres que coincidan por casualidad.
+  state.polarisMap[clave] = estacionId
+  try {
+    localStorage.setItem(POLARIS_MAP_STORAGE_KEY, JSON.stringify(state.polarisMap))
+  } catch (error) {
+    notify('No se pudo conservar la asignación en este navegador')
+    console.warn('Error guardando asignación Polaris:', error)
+  }
+  mostrarEstadoConexionesPolaris()
+  render()
+  notify(estacionId ? 'Estación vinculada; revisa las lecturas del tanque' : 'Estación desvinculada')
+}
+
 function mostrarEstadoConexionesPolaris() {
   const elemento = $('#pipasConexiones')
   if (!elemento) return
   const conectadas = state.polarisEstaciones.length
   const fallidas = state.polarisErrores.length
   const sinCoincidencia = estaciones.filter(estacion =>
-    !state.polarisEstaciones.some(row => estacionCoincide(row, estacion))
+    !state.polarisEstaciones.some(row => estacionPolarisCoincide(row, estacion))
   ).map(estacion => estacion.nombre)
   const duplicadas = estaciones.filter(estacion =>
-    state.polarisEstaciones.filter(row => estacionCoincide(row, estacion)).length > 1
+    state.polarisEstaciones.filter(row => estacionPolarisCoincide(row, estacion)).length > 1
   ).map(estacion => estacion.nombre)
+  const sinAsignar = state.polarisEstaciones.filter(row => !estacionPolarisAsignada(row))
+    .map(row => (row.server || 'Polaris') + ' (NoES ' + (row.no_es || '?') +
+      ', ' + (row.nombre_estacion || 'sin nombre') + ')')
+  const sinProductoCompatible = state.polarisEstaciones.filter(row => {
+    const destino = estacionPolarisAsignada(row)
+    return destino && !destino.productos.some(producto =>
+      (row.productos || []).some(registro =>
+        productoKey(registro.nombre_producto || '') === productoKey(producto.nombre)))
+  }).map(row =>
+    (row.server || 'Polaris') + ' ofrece productos: ' +
+    (row.productos || []).map(p => (p.nombre_producto || '?') + ' [' + p.no_producto + ']').join(', ')
+  )
   const antiguas = state.polarisEstaciones.flatMap(estacion =>
     (estacion.productos || [])
       .filter(producto => producto.estado_lectura !== 'vigente')
@@ -2532,14 +2714,20 @@ function mostrarEstadoConexionesPolaris() {
   const errores = state.polarisErrores.map(item =>
     (item.server || 'Polaris') + ': ' + (item.message || 'sin conexión')
   )
-  const resumen = 'Polaris: ' + conectadas + ' bases respondieron · ' + fallidas + ' errores de conexión.'
+  const vinculadas = estaciones.length - sinCoincidencia.length
+  const resumen = 'Polaris: ' + conectadas + ' bases respondieron · ' + fallidas +
+    ' errores de conexión · ' + vinculadas + '/' + estaciones.length +
+    ' estaciones identificadas.'
   const detalles = []
   if (errores.length) detalles.push('Sin conexión: ' + errores.join('; '))
-  if (sinCoincidencia.length) detalles.push('Sin estación identificada: ' + sinCoincidencia.join(', '))
+  if (sinAsignar.length) detalles.push('Bases sin vincular: ' + sinAsignar.join('; '))
+  if (sinCoincidencia.length) detalles.push('Estaciones pendientes: ' + sinCoincidencia.join(', '))
   if (duplicadas.length) detalles.push('Identificación duplicada: ' + duplicadas.join(', '))
+  if (sinProductoCompatible.length) detalles.push('Productos sin correspondencia: ' + sinProductoCompatible.join('; '))
   if (antiguas.length) detalles.push('Lecturas no vigentes: ' + antiguas.join('; '))
   elemento.textContent = [resumen, ...detalles].join(' ')
   elemento.classList.toggle('con-alertas', detalles.length > 0)
+  renderAsignacionesPolaris()
 }
 
 function actualizarTanquesPolarisDOM() {
@@ -2581,9 +2769,9 @@ function actualizarTanquesPolarisDOM() {
     elemento.classList.toggle('zero-muted', valorCero(valor))
     elemento.title = tituloCapacidadTanque(estacion, producto)
     if (elemento.dataset.tanqueParam === 'capacidad') {
-      elemento.dataset.fuente = capacidadTanquePolaris(estacion, producto) > 0 ? 'POLARIS EN VIVO' : 'RESPALDO'
+      elemento.dataset.fuente = etiquetaCapacidadTanque(estacion, producto)
     }
-    elemento.classList.toggle('capacidad-no-live', !(capacidadTanquePolaris(estacion, producto) > 0))
+    elemento.classList.toggle('capacidad-no-live', !lecturaVigentePolaris(estacion, producto))
   })
 }
 
@@ -2747,7 +2935,7 @@ function propuestaPipaAutomatica() {
       // El promedio mostrado sigue siendo suma de 7 días / 7.
       // Cuando faltan días capturados, usar una demanda conservadora para seguridad.
       const ventaSeguridad = diasDatos < 7
-        ? Math.max(promedio, Number(promedioRegistro.total_ventas_7_dias || 0) / diasDatos)
+        ? Math.max(promedio, numeroSql(promedioRegistro.total_ventas_7_dias || 0) / diasDatos)
         : promedio
       const maximoSeguro = capacidad * 0.95
       const umbral = Math.max(numberValue(producto.punto_reorden), ventaSeguridad * PIPA_DIAS_COLCHON)
@@ -4135,6 +4323,10 @@ async function exportarPDF() {
 
 function enlazarEventos() {
   $('#btnProgramarPipa').addEventListener('click', programarPipaAutomatica)
+  $('#polarisAsignaciones').addEventListener('change', event => {
+    const select = event.target.closest('select[data-polaris-map]')
+    if (select) guardarAsignacionPolaris(select)
+  })
   $('#btnCargar').addEventListener('click', async () => {
     state.fechaBase = $('#fechaBase').value || fechaHoyISO()
     state.historialSemanas = []

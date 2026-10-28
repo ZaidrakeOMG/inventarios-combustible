@@ -190,6 +190,8 @@ function obtenerRutaLogo() {
 
 function numberValue(value) {
   if (value === null || value === undefined || value === '') return 0
+  // SQL Server envía los DECIMAL como Number. No confundir 731.286 con 731,286.
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
 
   let limpio = String(value)
     .trim()
