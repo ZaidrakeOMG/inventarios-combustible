@@ -1377,7 +1377,16 @@ app.post('/api/pipas/compras', async (req, res) => {
     const fechaCompra = req.body.fecha_compra || req.body.fecha
     const idEstacion = Number(req.body.id_estacion)
     const idProducto = Number(req.body.id_producto)
-    const litrosCompra = numberValue(req.body.litros_compra)
+    const brutoLitros = req.body.litros_compra
+    // Un valor ilegible no debe convertirse en cero y borrar una compra.
+    const litrosValidos = typeof brutoLitros === 'number'
+      ? Number.isFinite(brutoLitros)
+      : typeof brutoLitros === 'string' &&
+        /^(?:\d+(?:[.,]\d+)?|\d{1,3}(?:,\d{3})+(?:\.\d+)?)$/.test(brutoLitros.trim())
+    if (!litrosValidos) {
+      return res.status(400).json({ ok: false, message: 'El campo litros debe ser numérico' })
+    }
+    const litrosCompra = numberValue(brutoLitros)
     const observaciones = String(req.body.observaciones || '').trim()
     const automatica = req.body.automatica === true
     const fechaValida = /^\d{4}-\d{2}-\d{2}$/.test(String(fechaCompra || '')) &&
