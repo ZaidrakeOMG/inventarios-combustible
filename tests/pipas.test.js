@@ -23,7 +23,8 @@ function motor({
   const localStorage = { getItem() { return null }, setItem() {} }
   const crear = new Function('document', 'window', 'localStorage',
     fechaFija + '\nreturn { estaciones, state, propuestaPipaAutomatica, ' +
-    'proyeccionDesdePolaris, numeroSql, estacionDetectadaAutomatica, saldoProyectado }')
+    'proyeccionDesdePolaris, numeroSql, estacionDetectadaAutomatica, saldoProyectado, ' +
+    'dependeDeEntregasPrevistas }')
   const app = crear(document, {}, localStorage)
   const estacion = app.estaciones.find(x => x.id_estacion === estacionId)
   const item = estacion.productos.find(x => x.nombre === producto)
@@ -48,6 +49,16 @@ function motor({
   }))
   return { ...app, estacion, item }
 }
+
+
+test('muestra el riesgo de una entrega programada que aún no está confirmada', () => {
+  const m = motor({ compras: [{ fecha: '2026-10-28' }] })
+  const con = m.proyeccionDesdePolaris(m.estacion, m.item, '2026-10-29')
+  const sin = m.proyeccionDesdePolaris(m.estacion, m.item, '2026-10-29', null, null, true)
+  const diferencia = m.dependeDeEntregasPrevistas(m.estacion, m.item, '2026-10-29')
+  assert.equal(Math.round(con.saldo - sin.saldo), 20000)
+  assert.equal(Math.round(diferencia.sin), Math.round(sin.saldo))
+})
 
 test('conserva los decimales reales de SQL', () => {
   const m = motor()
