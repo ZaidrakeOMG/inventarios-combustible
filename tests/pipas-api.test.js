@@ -23,7 +23,7 @@ test('promedios siempre usan 7 días anteriores y excluyen el día en curso', ()
   assert.doesNotMatch(ruta, /NOLOCK/)
   assert.match(ruta, /ROW_NUMBER\(\) OVER/)
   assert.match(ruta, /PARTITION BY i\.id_estacion, i\.id_producto, CONVERT\(DATE, i\.fecha\)/)
-  assert.match(ruta, /WHERE d\.rn = 1/)
+  assert.match(ruta, /AND d\.rn = 1/)
 })
 
 test('compra automática usa transacción SQL y no pisa compras existentes', () => {
