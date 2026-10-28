@@ -79,7 +79,7 @@ const REMOTE_SQL_USER = process.env.REMOTE_SQL_USER || process.env.SQL_USER || '
 const REMOTE_SQL_PASSWORD = process.env.REMOTE_SQL_PASSWORD || process.env.SQL_PASSWORD || ''
 const REMOTE_SQL_DATABASE = process.env.REMOTE_SQL_DATABASE || process.env.SQL_DATABASE || ''
 const REMOTE_SQL_CONNECTION_TIMEOUT = Number.parseInt(process.env.REMOTE_SQL_CONNECTION_TIMEOUT, 10) || 5000
-const POLARIS_DATABASE = process.env.POLARIS_DATABASE || process.env.REMOTE_SQL_DATABASE || 'Polaris'
+const POLARIS_DATABASE = process.env.POLARIS_DATABASE || 'Polaris'
 
 function sqlTargetFromRequest(req) {
   return {
