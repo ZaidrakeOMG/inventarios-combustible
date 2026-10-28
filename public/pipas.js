@@ -345,10 +345,23 @@ function notify(message) {
   setTimeout(() => toast.classList.remove('show'), 2600)
 }
 
+function nombreNormalizadoPolaris(row) {
+  const nombre = normalizarTexto(row?.nombre_estacion || row?.estacion || row?.estacion_nombre || '')
+  // Solo quitar la razón social AL FINAL, nunca usar coincidencias parciales:
+  // ARY I no debe coincidir con ARY II/III/IV.
+  return nombre.replace(/(?:SADECV|SACV|SADEC|SDECV)$/, '')
+}
+
 function estacionCoincide(row, estacion) {
-  // No usar startsWith: ARY I es prefijo de ARY II/III/IV.
-  const nombre = normalizarTexto(row.nombre_estacion || row.estacion || row.estacion_nombre || '')
+  const nombre = nombreNormalizadoPolaris(row)
   return !!nombre && estacion.aliases.some(alias => normalizarTexto(alias) === nombre)
+}
+
+function estacionDetectadaAutomatica(row) {
+  // Identificar por nombre comercial exacto, sin la terminación S.A. de C.V.
+  // No inferir por orden de bases ni por coincidencia parcial.
+  const candidatas = estaciones.filter(estacion => estacionCoincide(row, estacion))
+  return candidatas.length === 1 ? candidatas[0] : null
 }
 
 function cargarMapaPolaris() {
@@ -368,12 +381,15 @@ function claveServidorPolaris(row) {
 }
 
 function estacionPolarisCoincide(row, estacion) {
+  // Un nombre comercial inequívoco tiene prioridad ante una asignación local
+  // obsoleta (por ejemplo, al cambiar de navegador o actualizar el sistema).
+  const detectada = estacionDetectadaAutomatica(row)
+  if (detectada) return Number(detectada.id_estacion) === Number(estacion.id_estacion)
   const clave = claveServidorPolaris(row)
   if (clave && Object.prototype.hasOwnProperty.call(state.polarisMap, clave)) {
     return Number(state.polarisMap[clave]) === Number(estacion.id_estacion)
   }
-  // Emparejamiento automático solo si el nombre Polaris coincide EXACTAMENTE.
-  return estacionCoincide(row, estacion)
+  return false
 }
 
 function estacionPolarisAsignada(row) {
@@ -2613,7 +2629,9 @@ function renderAsignacionesPolaris() {
   })
   if (elemento.dataset.firma === firma) return
   const detallesAnteriores = elemento.querySelector('details')
-  const abierto = detallesAnteriores ? detallesAnteriores.open : sinAsignar.length > 0
+  // Cuando la vinculación automática está completa, no abrir el panel manual.
+  const abierto = sinAsignar.length > 0 && (detallesAnteriores ? detallesAnteriores.open : true)
+  const automaticas = state.polarisEstaciones.filter(row => estacionDetectadaAutomatica(row)).length
 
   const opciones = estacion =>
     '<option value="' + estacion.id_estacion + '">' + escaparHTML(estacion.nombre) + '</option>'
@@ -2622,27 +2640,28 @@ function renderAsignacionesPolaris() {
     const asignada = estacionPolarisAsignada(row)
     const clave = claveServidorPolaris(row)
     const seleccionada = asignada?.id_estacion || 0
+    const automatica = estacionDetectadaAutomatica(row)
     const options = '<option value="0">— Sin vincular —</option>' + estaciones.map(opciones).join('')
     const nombre = row.nombre_estacion || 'Nombre no disponible'
     const noEs = Number(row.no_es) || 'N/D'
     const descrip = String(row.server || 'Servidor sin nombre') + ' · NoES ' + noEs
     return '<div class="polaris-map-row' + (asignada ? '' : ' sin-vincular') + '">' +
       '<label>' + escaparHTML(descrip) + '<br><small>Polaris: ' +
-      escaparHTML(nombre) + '</small></label>' +
+      escaparHTML(nombre) + (automatica ? ' · Detectada automáticamente' : '') + '</small></label>' +
       '<select data-polaris-map="' + escaparHTML(clave) + '" aria-label="Estación correspondiente a ' +
-      escaparHTML(descrip) + '"' + (clave ? '' : ' disabled') + '>' +
+      escaparHTML(descrip) + '"' + (clave && !automatica ? '' : ' disabled') + '>' +
       options.replace('value="' + seleccionada + '"',
         'value="' + seleccionada + '" selected') + '</select>' +
       '</div>'
   }).join('')
 
   elemento.innerHTML = '<details' + (abierto ? ' open' : '') + '>' +
-    '<summary>Vincular estaciones de Polaris (' +
+    '<summary>Estaciones Polaris (' + automaticas + ' automáticas · ' +
     (state.polarisEstaciones.length - sinAsignar.length) + '/' +
     state.polarisEstaciones.length + ' identificadas)</summary>' +
-    '<p>Las bases responden, pero sus nombres pueden ser distintos. Selecciona la estación correcta para cada ' +
-    'servidor y NoES, comprobando que corresponda físicamente. Se guarda en este navegador. ' +
-    'Nunca se relacionan estaciones por orden o por similitud de nombre.</p>' +
+    '<p>Se reconocen automáticamente los nombres comerciales, aunque Polaris agregue S.A. de C.V. ' +
+    'Solo las estaciones con nombres desconocidos necesitan vinculación manual. ' +
+    'La relación se comprueba por servidor y NoES; nunca por orden ni similitudes parciales.</p>' +
     '<div class="polaris-map-grid">' + (filas || '<p>No hay servidores Polaris disponibles.</p>') +
     '</div></details>'
   elemento.dataset.firma = firma
@@ -2652,6 +2671,12 @@ function guardarAsignacionPolaris(select) {
   const clave = String(select?.dataset?.polarisMap || '')
   const estacionId = Number(select?.value || 0)
   if (!clave || !state.polarisEstaciones.some(row => claveServidorPolaris(row) === clave)) return
+  const origen = state.polarisEstaciones.find(row => claveServidorPolaris(row) === clave)
+  if (estacionDetectadaAutomatica(origen)) {
+    notify('Esta estación ya se identificó automáticamente por su nombre')
+    renderAsignacionesPolaris()
+    return
+  }
   if (!Number.isSafeInteger(estacionId) ||
       (estacionId && !estaciones.some(row => row.id_estacion === estacionId))) {
     notify('Estación inválida')
