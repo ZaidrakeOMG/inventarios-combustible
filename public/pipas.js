@@ -495,14 +495,17 @@ function renderTanquePolaris(estacion, producto) {
     escaparHTML(textoFechaTanquePolaris(estacion, producto)) + '</small></div>'
 }
 
-function tituloCapacidadTanque(estacion, producto) {
+function etiquetaCapacidadTanque(estacion, producto) {
   const capacidad = capacidadTanquePolaris(estacion, producto)
+  if (!(capacidad > 0)) return 'RESPALDO'
+  return lecturaVigentePolaris(estacion, producto) ? 'POLARIS VIGENTE' : 'POLARIS SIN VERIFICAR'
+}
+
+function tituloCapacidadTanque(estacion, producto) {
   const row = buscarProductoPolaris(estacion, producto)
-  const origen = capacidad !== null && capacidad > 0
-    ? 'Capacidad desde Polaris en vivo'
-    : 'Capacidad de respaldo configurada (sin lectura vigente de Polaris)'
+  const etiqueta = etiquetaCapacidadTanque(estacion, producto)
   const tanques = Number(row?.numero_tanques || 0)
-  return origen + (tanques > 0 ? ' · ' + tanques + ' tanque(s)' : '')
+  return etiqueta + (tanques > 0 ? ' · ' + tanques + ' tanque(s)' : '')
 }
 
 function fuenteInventarioInicial(estacion, producto) {
@@ -2382,7 +2385,7 @@ function renderParametros(estacion) {
           ${fuenteInventarioInicial(estacion, producto)}
         </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
-        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" data-fuente="${capacidadTanquePolaris(estacion, producto) > 0 ? 'POLARIS EN VIVO' : 'RESPALDO'}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${capacidadTanquePolaris(estacion, producto) > 0 ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
+        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" data-fuente="${etiquetaCapacidadTanque(estacion, producto)}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${lecturaVigentePolaris(estacion, producto) ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
         <td data-tanque-param="fondaje" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
         <td class="${valorCero(producto.punto_reorden) ? 'zero-muted' : ''}">${litros(producto.punto_reorden)}</td>
         <td data-tanque-param="maxima" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
@@ -2683,6 +2686,15 @@ function mostrarEstadoConexionesPolaris() {
   const sinAsignar = state.polarisEstaciones.filter(row => !estacionPolarisAsignada(row))
     .map(row => (row.server || 'Polaris') + ' (NoES ' + (row.no_es || '?') +
       ', ' + (row.nombre_estacion || 'sin nombre') + ')')
+  const sinProductoCompatible = state.polarisEstaciones.filter(row => {
+    const destino = estacionPolarisAsignada(row)
+    return destino && !destino.productos.some(producto =>
+      (row.productos || []).some(registro =>
+        productoKey(registro.nombre_producto || '') === productoKey(producto.nombre)))
+  }).map(row =>
+    (row.server || 'Polaris') + ' ofrece productos: ' +
+    (row.productos || []).map(p => (p.nombre_producto || '?') + ' [' + p.no_producto + ']').join(', ')
+  )
   const antiguas = state.polarisEstaciones.flatMap(estacion =>
     (estacion.productos || [])
       .filter(producto => producto.estado_lectura !== 'vigente')
@@ -2701,6 +2713,7 @@ function mostrarEstadoConexionesPolaris() {
   if (sinAsignar.length) detalles.push('Bases sin vincular: ' + sinAsignar.join('; '))
   if (sinCoincidencia.length) detalles.push('Estaciones pendientes: ' + sinCoincidencia.join(', '))
   if (duplicadas.length) detalles.push('Identificación duplicada: ' + duplicadas.join(', '))
+  if (sinProductoCompatible.length) detalles.push('Productos sin correspondencia: ' + sinProductoCompatible.join('; '))
   if (antiguas.length) detalles.push('Lecturas no vigentes: ' + antiguas.join('; '))
   elemento.textContent = [resumen, ...detalles].join(' ')
   elemento.classList.toggle('con-alertas', detalles.length > 0)
@@ -2746,9 +2759,9 @@ function actualizarTanquesPolarisDOM() {
     elemento.classList.toggle('zero-muted', valorCero(valor))
     elemento.title = tituloCapacidadTanque(estacion, producto)
     if (elemento.dataset.tanqueParam === 'capacidad') {
-      elemento.dataset.fuente = capacidadTanquePolaris(estacion, producto) > 0 ? 'POLARIS EN VIVO' : 'RESPALDO'
+      elemento.dataset.fuente = etiquetaCapacidadTanque(estacion, producto)
     }
-    elemento.classList.toggle('capacidad-no-live', !(capacidadTanquePolaris(estacion, producto) > 0))
+    elemento.classList.toggle('capacidad-no-live', !lecturaVigentePolaris(estacion, producto))
   })
 }
 
