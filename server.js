@@ -471,12 +471,18 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
           p.Producto AS nombre_producto,
           CAST(SUM(CAST(ISNULL(t.Volumen, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS tanque_actual,
           CAST(SUM(CAST(ISNULL(t.CapacidadTotal, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS capacidad_tanque,
+          COUNT(*) AS numero_tanques,
           CONVERT(VARCHAR(19), MAX(t.FechaHora), 120) AS fecha_tanque
         FROM dbo.Tanques t WITH (NOLOCK)
-        INNER JOIN dbo.Productos p WITH (NOLOCK)
-          ON p.NoProducto = t.NoProducto
-        WHERE t.NoES = @no_es
-          AND p.TipoProducto = 'C'
+        -- Una fila por producto en el catálogo: impedir que un JOIN
+        -- con códigos duplicados infle litros y capacidad del tanque.
+        OUTER APPLY (
+          SELECT TOP (1) prod.Producto
+          FROM dbo.Productos prod WITH (NOLOCK)
+          WHERE prod.NoProducto = t.NoProducto AND prod.TipoProducto = 'C'
+          ORDER BY prod.Producto
+        ) p
+        WHERE t.NoES = @no_es AND p.Producto IS NOT NULL
         GROUP BY
           t.NoProducto,
           p.Producto
@@ -490,6 +496,7 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
       nombre_producto: row.nombre_producto,
       tanque_actual: row.tanque_actual === null ? null : Number(row.tanque_actual),
       capacidad_tanque: row.capacidad_tanque === null ? null : Number(row.capacidad_tanque),
+      numero_tanques: Number(row.numero_tanques || 0),
       fecha_tanque: row.fecha_tanque || null
     }))
 
