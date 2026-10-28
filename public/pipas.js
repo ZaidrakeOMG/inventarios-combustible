@@ -2617,6 +2617,14 @@ function renderProyeccion(estacion) {
       const inventarioDiaAplicacion = inventarioRealDia(estacion, producto, fechaAplicacionCompra)
       const compraSeSumaDiaSiguiente = compra > 0 && compraCuentaEnSaldo(fecha, fechaAplicacionCompra, inventarioDiaAplicacion)
       const textoCompra = compraSeSumaDiaSiguiente ? 'Si llega mañana, se suman' : 'Compra pendiente de validar'
+      const idsCompra = obtenerIds(estacion, producto)
+      const esCompraAutomatica = state.compras.some(item =>
+        String(item.fecha_compra).slice(0, 10) === fecha &&
+        Number(item.id_estacion) === idsCompra.id_estacion &&
+        Number(item.id_producto) === idsCompra.id_producto &&
+        /^(automática:|programación preventiva|proyección de inventario real)/i
+          .test(String(item.observaciones || '').trim())
+      )
 
       return `
         <td>
@@ -2627,7 +2635,7 @@ function renderProyeccion(estacion) {
               data-proyeccion-fecha="${fecha}"
               title="${escaparHTML(tituloSaldoProyectado(estacion, producto, fecha))}">${litros(saldo)}</div>
             ${renderCompraInput(estacion, producto, fecha)}
-            ${compra > 0 ? `<small>${textoCompra}: ${litros(compra)}</small>` : ''}
+            ${compra > 0 ? `<small>${esCompraAutomatica ? 'Automática · ' : ''}${textoCompra}: ${litros(compra)}</small>` : ''}
           </div>
         </td>
       `
@@ -2652,7 +2660,7 @@ function renderProyeccion(estacion) {
         <h3 class="table-title">Proyección al cierre · ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
         <button class="week-nav" type="button" data-week-nav="7">Semana siguiente ▶</button>
       </div>
-      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Inventario inicial: cierre contable anterior. Desde hoy, los cierres se proyectan con Polaris vigente y ventas de 7 días; sin sensor válido, se muestra un respaldo contable. Las compras D+1 son entradas estimadas, NO confirmadas.</small>
+      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Inventario inicial: cierre contable anterior. Desde hoy, los cierres se proyectan con Polaris vigente y ventas de 7 días; sin sensor válido, se muestra un respaldo contable. Las compras D+1 son entradas estimadas, NO confirmadas. Para quitar una programación anterior, deja vacía su casilla Compra.</small>
       <div class="table-wrap">
         <table class="projection-table">
           <thead>
@@ -3083,6 +3091,19 @@ async function guardarCompra(input) {
  // sin duplicar día ni rebasar 95% de capacidad y reorden para cada producto.
 // Se considera que una compra programada en D llega al inicio de D+1;
 // si la logística real requiere más tiempo debe ajustarse el sistema.
+function comprasPendientesParaProducto(estacion, producto, hoy) {
+  const ids = obtenerIds(estacion, producto)
+  return state.compras.filter(item => {
+    const fecha = String(item.fecha_compra || '').slice(0, 10)
+    return fecha >= hoy &&
+      Number(item.id_estacion) === ids.id_estacion &&
+      Number(item.id_producto) === ids.id_producto &&
+      numeroSql(item.litros_compra) > 0
+  }).sort((a, b) => String(a.fecha_compra).localeCompare(String(b.fecha_compra)))
+}
+
+// Una sola propuesta próxima por estación y producto. No llenar catorce días
+// como si una entrega prevista fuese una entrega físicamente confirmada.
 function propuestaPipaAutomatica() {
   const hoy = fechaHoyISO()
   const fechas = rangoFechas(hoy, fechaMasDiasISO(hoy, PIPA_HORIZONTE_DIAS))
@@ -3091,78 +3112,90 @@ function propuestaPipaAutomatica() {
 
   for (const estacion of estaciones) {
     for (const producto of estacion.productos) {
-      const promedioRegistro = buscarPromedio(estacion, producto)
-      const promedio = promedioVenta(estacion, producto)
-      const volumen = tanqueActualPolaris(estacion, producto)
-      const capacidad = capacidadTanquePolaris(estacion, producto)
-      const estado = estadoLecturaPolaris(estacion, producto)
-      const diasDatos = Number(promedioRegistro?.dias_con_dato || 0)
       const nombre = estacion.nombre + ' / ' + producto.nombre
+      const lectura = buscarProductoPolaris(estacion, producto)
+      const tanque = tanqueActualPolaris(estacion, producto)
+      const capacidad = capacidadTanquePolaris(estacion, producto)
+      const promedio = ventaDiariaEstimada(estacion, producto)
+      const estado = estadoLecturaPolaris(estacion, producto)
+      const reorden = numberValue(producto.punto_reorden)
 
-      if (estado !== 'vigente' || volumen === null || !(capacidad > 0)) {
-        avisos.push(nombre + ': ' + nombreEstadoLectura(estado))
+      const restoHoy = fraccionRestanteDeHoyPolaris(lectura)
+      if (estado !== 'vigente' || tanque === null || !(capacidad > 0) ||
+          restoHoy === null) {
+        avisos.push(nombre + ': lectura del tanque no verificable')
         continue
       }
-      if (!(promedio > 0) || diasDatos < 3) {
-        avisos.push(nombre + ': faltan ventas confiables (mínimo 3 días de los últimos 7)')
+      if (!(promedio > 0)) {
+        avisos.push(nombre + ': faltan datos de ventas suficientes de los 7 días')
+        continue
+      }
+      if (!(reorden > 0) || reorden >= capacidad) {
+        avisos.push(nombre + ': revisar punto de reorden, fuera del rango del tanque')
         continue
       }
 
-      const ventaSeguridad = ventaDiariaEstimada(estacion, producto)
-      if (!(ventaSeguridad > 0)) continue
-      // El punto de reorden CAPTURADO para cada estación/combustible es la referencia
-      // principal. La demanda durante el tiempo de entrega + colchón puede adelantar
-      // el pedido cuando el punto configurado es demasiado bajo para evitar desabasto.
-      const puntoReorden = numberValue(producto.punto_reorden)
-      if (!(puntoReorden > 0) || puntoReorden >= capacidad) {
-        avisos.push(nombre + ': punto de reorden no válido para la capacidad del tanque')
-        continue
-      }
-      const maximoSeguro = capacidad * 0.95
-      const reservaLogistica = ventaSeguridad * PIPA_DIAS_COLCHON
-      const nivelProgramacion = Math.max(puntoReorden, reservaLogistica)
-      const simuladas = new Map()
+      const capacidadSegura = capacidad * 0.95
+      const fondaje = fondajeValor(producto)
+      // Reorden manda. Solo adelantar el umbral si ni siquiera alcanza para
+      // cubrir una entrega D+1 con margen de 1/4 de día y el fondo de tanque.
+      const demandaEntrega = promedio * 1.25 + fondaje
+      const nivelSolicitud = Math.max(reorden, demandaEntrega)
+      const pendiente = comprasPendientesParaProducto(estacion, producto, hoy)[0] || null
+      const entregaPendiente = pendiente
+        ? fechaMasDiasISO(String(pendiente.fecha_compra).slice(0, 10), 1) : ''
 
+      if (tanque / promedio < 2) {
+        avisos.push(nombre + ': autonomía de tanque inferior a 2 días; verificar entrega y ventas')
+      }
+      if (PIPA_AUTOMATICA_LITROS / promedio < 2) {
+        avisos.push(nombre + ': una pipa de 20,000 L cubre solo ' +
+          formatoNumero(PIPA_AUTOMATICA_LITROS / promedio, 1) +
+          ' días de venta; revisar regularmente')
+      }
+
+      // Si ya hay un pedido pendiente para este producto, no programar
+      // automáticamente otro después de esa entrega, sin una nueva medición.
+      // Excepción: una compra próxima que llega demasiado tarde al reorden.
       for (const fecha of fechas) {
+        if (entregaPendiente && entregaPendiente <= fechaMasDiasISO(fecha, 1)) break
+
+        const cierre = proyeccionDesdePolaris(estacion, producto, fecha, promedio)
+        if (!cierre) break
+        if (cierre.saldo > nivelSolicitud) continue
+
+        if (cierre.saldo <= fondaje) {
+          avisos.push(nombre + ': riesgo de bajar del fondaje antes de recibir una pipa; verificar disponibilidad urgente')
+        }
+
+        // Evitar compras duplicadas en la misma fecha. La compra en D llega
+        // previsiblemente en D+1; no reponer cada cierre para forzar que el
+        // inventario se mantenga permanentemente sobre el punto de reorden.
+        if (compraDia(estacion, producto, fecha) > 0) break
+
         const entrega = fechaMasDiasISO(fecha, 1)
-        const modeloPedido = proyeccionDesdePolaris(estacion, producto, fecha, ventaSeguridad, simuladas)
-        const modeloEntrega = proyeccionDesdePolaris(estacion, producto, entrega, ventaSeguridad, simuladas)
-        if (!modeloPedido || !modeloEntrega) break
-        const cierrePedido = modeloPedido.saldo
-        const cierreEntrega = modeloEntrega.saldo
-
-        if (cierrePedido <= 0) {
-          avisos.push(nombre + ': podría agotarse ANTES de la fecha de entrega estimada; atención urgente')
+        const cierreEntrega = proyeccionDesdePolaris(estacion, producto, entrega, promedio)
+        if (!cierreEntrega) break
+        if (cierre.saldo + PIPA_AUTOMATICA_LITROS > capacidadSegura) {
+          avisos.push(nombre + ': una nueva pipa de 20,000 L no cabe en el margen operativo')
+          continue
+        }
+        if (cierre.saldo <= 0 || cierreEntrega.saldo + PIPA_AUTOMATICA_LITROS <= 0) {
+          avisos.push(nombre + ': riesgo de desabasto antes o durante la entrega; atender con proveedor')
           break
-        }
-        // Si hay pedido en este día, ese volumen ya fue contemplado en la proyección.
-        if (compraDia(estacion, producto, fecha) > 0) continue
-        // Pedir el día ANTERIOR al cruce del punto de reorden estimado.
-        // No esperar a que el tanque llegue a cero. Si la logística requiere
-        // anticiparse más de un día, se debe ajustar la fecha real de recepción.
-        if (cierreEntrega > nivelProgramacion) continue
-
-        // Máximo operativo estimado 95 %; no exceder capacidad al recibir.
-        // Se valida contra el volumen anterior a la recepción.
-        if (cierrePedido + PIPA_AUTOMATICA_LITROS > maximoSeguro) {
-          avisos.push(nombre + ': riesgo previsto, pero 20,000 L excederían la capacidad segura')
-          continue
-        }
-        if (cierreEntrega + PIPA_AUTOMATICA_LITROS <= 0) {
-          avisos.push(nombre + ': 20,000 L no cubrirían la demanda prevista; atención urgente')
-          continue
         }
 
         candidatos.push({
           estacion, producto, fecha, entrega,
-          saldoSinCompra: cierreEntrega, volumen, ventaDiaria: ventaSeguridad,
-          puntoReorden, reservaLogistica, nivelProgramacion,
-          diasRestantes: volumen / ventaSeguridad,
-          cobertura: cierreEntrega / ventaSeguridad
+          saldoSinCompra: cierreEntrega.saldo,
+          volumen: tanque, ventaDiaria: promedio,
+          puntoReorden: reorden,
+          nivelProgramacion: nivelSolicitud,
+          diasRestantes: tanque / promedio,
+          cobertura: cierre.saldo / promedio,
+          pedidoPrevio: pendiente
         })
-        // Recalcular los siguientes días con la pipa recién propuesta.
-        // Esto evita una sola compra por producto cuando hay ventas fuertes.
-        simuladas.set(fecha, PIPA_AUTOMATICA_LITROS)
+        break
       }
     }
   }
@@ -3223,22 +3256,19 @@ async function programarPipaAutomatica() {
       return
     }
 
-    // Confirmación compacta. El detalle técnico se deja en consola y los
-    // pedidos se reflejan en las casillas de la tabla, no en un bloque gigante.
-    const agrupadas = new Map()
-    for (const item of propuesta.candidatos) {
-      const nombre = item.estacion.nombre
-      agrupadas.set(nombre, (agrupadas.get(nombre) || 0) + 1)
-    }
-    const resumenEstaciones = [...agrupadas]
-      .map(([nombre, cantidad]) => nombre + ': ' + cantidad + ' pipa(s)')
-      .join('\n')
+    // Vista previa por fecha y combustible: nunca aceptar un lote "a ciegas".
+    const vista = propuesta.candidatos.map(item =>
+      item.estacion.nombre + ' / ' + item.producto.nombre + ': ' +
+      fechaBonita(item.fecha) + ' (entrega aprox. ' + fechaBonita(item.entrega) + ')' +
+      ' · reorden ' + litros(item.puntoReorden) + ' L'
+    )
     const confirmar = window.confirm(
-      'Se propone programar ' + propuesta.candidatos.length +
-      ' pipas de 20,000 L (' + litros(propuesta.candidatos.length * PIPA_AUTOMATICA_LITROS) +
-      ' L en total) considerando los puntos de reorden y compras existentes.\n\n' +
-      resumenEstaciones +
-      '\n\nLa entrega al día siguiente es estimada. NO se enviará ningún pedido al proveedor. ¿Guardar?'
+      'PRÓXIMAS COMPRAS SUGERIDAS (una por combustible)\n\n' +
+      vista.join('\n') + '\n\n' +
+      'Total: ' + propuesta.candidatos.length + ' pipa(s) de 20,000 L.\n' +
+      'No se programan las siguientes entregas del mismo combustible hasta ' +
+      'volver a revisar las lecturas y las compras pendientes.\n\n' +
+      'Las fechas D+1 son estimadas y NO se envían pedidos al proveedor. ¿Guardar estas propuestas?'
     )
     if (!confirmar) {
       notify('Programación cancelada')
