@@ -17,7 +17,7 @@ Sistema interno para inventarios, costos y programación preventiva de pipas, co
 1. El promedio mostrado es la suma de ventas capturadas de los **7 días anteriores al reporte / 7**. Las ventas no se consultan a Polaris.
 2. Para programar automáticamente exige al menos 3 días capturados; si faltan días, calcula una demanda operativa prudente sin cambiar el promedio mostrado.
 3. La proyección desde hoy inicia en la medición válida de Polaris y sólo descuenta ventas posteriores a la hora de esa lectura. Con sensor antiguo o inválido puede mostrar un respaldo contable, pero no programar automáticamente el producto.
-4. Las compras guardadas son **programaciones**, no entregas confirmadas. La tabla supone que una compra de fecha D se recibe al inicio de **D+1**, únicamente para proyectar. Verificar este plazo con el proveedor.
+4. Las compras guardadas son **programaciones**, no entregas confirmadas. Los saldos que dependen de su recepción se distinguen en la tabla como **Sujeto a entrega**, con el escenario sin esa entrega disponible al pasar el cursor. La tabla supone que una compra de fecha D se recibe al inicio de **D+1**, únicamente para proyectar. Verificar este plazo con el proveedor.
 5. El punto de reorden es la referencia. Se anticipa si la demanda prevista durante el tiempo de entrega más el fondaje requiere un margen mayor. La fecha de solicitud se decide por la existencia estimada **al llegar la pipa**, no cuando el tanque ya está por debajo del reorden.
 6. Se sugiere sólo **una próxima pipa de 20,000 L por estación/combustible** por operación, no un calendario entero sin confirmar recepciones. Las compras pendientes se consideran; no se duplica el mismo día y se respeta el 95% de capacidad operativa.
 7. El botón Programar guarda registros en la base central; **no envía pedidos al proveedor**. La inserción automática utiliza transacción y bloqueo SQL para evitar compras simultáneas duplicadas.
@@ -74,3 +74,7 @@ Después reiniciar Node.js usando el procedimiento ya utilizado en el servidor y
 **npm test** ejecuta pruebas aisladas sobre el motor JavaScript real de public/pipas.js, con fecha fija y datos simulados. Verifica decimales, nombres, proyección por hora, compras pasadas, punto de reorden, compras tardías, duplicados, ventas altas, sensores antiguos y falta de ventas. No toca SQL Server.
 
 La prueba de integración contra bases y tanques reales sigue siendo indispensable. Hacer respaldo de InventariosCombustible antes de desplegar cambios que escriban compras.
+
+### Integridad SQL opcional
+
+El archivo database_extra.sql contiene una migración **manual** que propone un índice único por fecha/estación/combustible. Si ya hay duplicados, los muestra y no modifica ni elimina ninguno. No se ejecuta durante npm start ni durante git pull; revisar primero con un administrador de SQL Server y respaldo reciente.
