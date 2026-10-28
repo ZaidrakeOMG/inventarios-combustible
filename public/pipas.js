@@ -952,7 +952,7 @@ function fraccionRestanteDeHoyPolaris(lectura) {
   return Math.max(0, Math.min(1, (1440 - minutosDesdeMedianoche) / 1440))
 }
 
-function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional = null) {
+function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional = null, comprasAdicionales = null) {
   const hoy = fechaHoyISO()
   if (fechaObjetivo < hoy || !lecturaVigentePolaris(estacion, producto)) return null
   const lectura = buscarProductoPolaris(estacion, producto)
@@ -969,7 +969,9 @@ function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional
     // Compra programada el día D: ingreso SUPUESTO al comienzo de D+1.
     // Nunca sumar compras pasadas al nivel físico, pues Polaris ya las refleja.
     if (fechaActual > hoy) {
-      saldo += compraDia(estacion, producto, fechaMasDiasISO(fechaActual, -1))
+      const fechaCompra = fechaMasDiasISO(fechaActual, -1)
+      saldo += compraDia(estacion, producto, fechaCompra) +
+        (comprasAdicionales ? Number(comprasAdicionales.get(fechaCompra) || 0) : 0)
     }
     saldo -= venta * (fechaActual === hoy ? fraccionHoy : 1)
   }
@@ -3064,7 +3066,8 @@ async function guardarCompra(input) {
 
 // El saldo de la tabla y la fecha de compra proceden del mismo modelo Polaris.
 
-// Propuestas preventivas: una pipa por estación/combustible que la requiera.
+// Propuestas preventivas: tantas pipas como se necesiten durante el horizonte,
+ // sin duplicar día ni rebasar 95% de capacidad y reorden para cada producto.
 // Se considera que una compra programada en D llega al inicio de D+1;
 // si la logística real requiere más tiempo debe ajustarse el sistema.
 function propuestaPipaAutomatica() {
@@ -3105,11 +3108,12 @@ function propuestaPipaAutomatica() {
       const maximoSeguro = capacidad * 0.95
       const reservaLogistica = ventaSeguridad * PIPA_DIAS_COLCHON
       const nivelProgramacion = Math.max(puntoReorden, reservaLogistica)
+      const simuladas = new Map()
 
       for (const fecha of fechas) {
         const entrega = fechaMasDiasISO(fecha, 1)
-        const modeloPedido = proyeccionDesdePolaris(estacion, producto, fecha, ventaSeguridad)
-        const modeloEntrega = proyeccionDesdePolaris(estacion, producto, entrega, ventaSeguridad)
+        const modeloPedido = proyeccionDesdePolaris(estacion, producto, fecha, ventaSeguridad, simuladas)
+        const modeloEntrega = proyeccionDesdePolaris(estacion, producto, entrega, ventaSeguridad, simuladas)
         if (!modeloPedido || !modeloEntrega) break
         const cierrePedido = modeloPedido.saldo
         const cierreEntrega = modeloEntrega.saldo
@@ -3143,7 +3147,9 @@ function propuestaPipaAutomatica() {
           diasRestantes: volumen / ventaSeguridad,
           cobertura: cierreEntrega / ventaSeguridad
         })
-        break
+        // Recalcular los siguientes días con la pipa recién propuesta.
+        // Esto evita una sola compra por producto cuando hay ventas fuertes.
+        simuladas.set(fecha, PIPA_AUTOMATICA_LITROS)
       }
     }
   }
@@ -3218,8 +3224,13 @@ async function programarPipaAutomatica() {
 
     const guardadas = []
     const fallidas = []
+    const productosBloqueados = new Set()
     for (const item of propuesta.candidatos) {
       const ids = obtenerIds(item.estacion, item.producto)
+      const clave = ids.id_estacion + '/' + ids.id_producto
+      // Las siguientes pipas de un producto dependían de que sus anteriores
+      // se guardaran. Si falla una, no guardar después fechas basadas en ella.
+      if (productosBloqueados.has(clave)) continue
       try {
         await fetchJson('/api/pipas/compras', {
           method: 'POST',
@@ -3237,6 +3248,7 @@ async function programarPipaAutomatica() {
         guardadas.push(item)
       } catch (error) {
         // No sobrescribir una compra existente: el servidor responde 409.
+        productosBloqueados.add(clave)
         fallidas.push(item.estacion.nombre + ' / ' + item.producto.nombre + ': ' + error.message)
       }
     }
