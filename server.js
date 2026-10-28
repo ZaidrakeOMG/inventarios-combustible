@@ -476,7 +476,7 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
     const columnaTanque = await identificarColumnaTanque(pool, server)
     const columnaEscapada = columnaTanque ? '[' + columnaTanque.replace(/]/g, ']]') + ']' : null
     const fila = columnaEscapada
-      ? 'ROW_NUMBER() OVER (PARTITION BY t.NoES, t.' + columnaEscapada + ' ORDER BY t.FechaHora DESC) AS fila'
+      ? 'ROW_NUMBER() OVER (PARTITION BY t.NoES, t.NoProducto, t.' + columnaEscapada + ' ORDER BY t.FechaHora DESC) AS fila'
       : 'CAST(1 AS INT) AS fila'
 
     const actuales = await crearRequestPool(pool)
