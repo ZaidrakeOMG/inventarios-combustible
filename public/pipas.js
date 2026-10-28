@@ -891,7 +891,7 @@ function esInventarioFicticio(estacion, producto, fecha) {
   return ultimoInventarioRealAntes(estacion, producto, fechaISO) !== null
 }
 
-function saldoProyectado(estacion, producto, fecha) {
+function saldoProyectadoInventarios(estacion, producto, fecha) {
   const fechas = rangoFechas(state.fechaBase, fecha)
   const promedio = promedioVenta(estacion, producto)
 
@@ -921,6 +921,123 @@ function saldoProyectado(estacion, producto, fecha) {
   })
 
   return saldo
+}
+
+// Una sola fuente de proyección actual para la tabla y para PROGRAMAR.
+// Inventario inicial (contable) permanece separado del tanque físico Polaris.
+function ventaDiariaEstimada(estacion, producto) {
+  const registro = buscarPromedio(estacion, producto)
+  const promedio = promedioVenta(estacion, producto)
+  const dias = Number(registro?.dias_con_dato || 0)
+  if (!(promedio > 0) || dias < 3) return null
+  if (dias >= 7) return promedio
+  // Si faltan días registrados, evitar subestimar el consumo.
+  return Math.max(promedio, numeroSql(registro.total_ventas_7_dias || 0) / dias)
+}
+
+function fraccionRestanteDeHoyPolaris(lectura) {
+  const match = String(lectura?.fecha_tanque || '').match(
+    /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/
+  )
+  if (!match) return null
+  const fechaMedicion = match[1] + '-' + match[2] + '-' + match[3]
+  if (fechaMedicion !== fechaHoyISO()) return null
+  const horas = Number(match[4])
+  const minutos = Number(match[5])
+  const segundos = Number(match[6] || 0)
+  if (horas > 23 || minutos > 59 || segundos > 59) return null
+  // El sensor guarda una hora local. Evitar descontar ventas ya reflejadas
+  // por Polaris. Distribución uniforme del promedio solo como aproximación.
+  const minutosDesdeMedianoche = horas * 60 + minutos + segundos / 60
+  return Math.max(0, Math.min(1, (1440 - minutosDesdeMedianoche) / 1440))
+}
+
+function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional = null, comprasAdicionales = null) {
+  const hoy = fechaHoyISO()
+  if (fechaObjetivo < hoy || !lecturaVigentePolaris(estacion, producto)) return null
+  const lectura = buscarProductoPolaris(estacion, producto)
+  const fraccionHoy = fraccionRestanteDeHoyPolaris(lectura)
+  const tanque = tanqueActualPolaris(estacion, producto)
+  const venta = ventaOpcional === null ? ventaDiariaEstimada(estacion, producto) : ventaOpcional
+  const fechas = rangoFechas(hoy, fechaObjetivo)
+
+  if (fraccionHoy === null || tanque === null || !(venta > 0) ||
+      !fechas.length || fechas[fechas.length - 1] !== fechaObjetivo) return null
+
+  let saldo = tanque
+  for (const fechaActual of fechas) {
+    // Compra programada el día D: ingreso SUPUESTO al comienzo de D+1.
+    // Nunca sumar compras pasadas al nivel físico, pues Polaris ya las refleja.
+    if (fechaActual > hoy) {
+      const fechaCompra = fechaMasDiasISO(fechaActual, -1)
+      saldo += compraDia(estacion, producto, fechaCompra) +
+        (comprasAdicionales ? Number(comprasAdicionales.get(fechaCompra) || 0) : 0)
+    }
+    saldo -= venta * (fechaActual === hoy ? fraccionHoy : 1)
+  }
+  return {
+    saldo,
+    tanque,
+    venta,
+    fraccionHoy,
+    fechaMedicion: String(lectura.fecha_tanque || ''),
+    fuente: 'POLARIS_PROYECTADO'
+  }
+}
+
+function saldoProyectado(estacion, producto, fecha) {
+  const modelo = proyeccionDesdePolaris(estacion, producto, fecha)
+  return modelo ? modelo.saldo : saldoProyectadoInventarios(estacion, producto, fecha)
+}
+
+function claseSaldoEstimado(estacion, producto, fecha, saldo) {
+  // Un cero de un tanque real significa riesgo de desabasto; no "sin dato".
+  if (proyeccionDesdePolaris(estacion, producto, fecha) && saldo <= 0) return 'riesgo-vacio'
+  if (saldo < 0) return 'riesgo-vacio'
+  return claseEstatus(saldo, producto.punto_reorden)
+}
+
+function tituloSaldoProyectado(estacion, producto, fecha) {
+  const modelo = proyeccionDesdePolaris(estacion, producto, fecha)
+  if (!modelo) {
+    return 'Estimación desde Inventarios Combustibles. No existe lectura de Polaris vigente y ventas suficientes para la fecha; no se usa para programar automáticamente.'
+  }
+  return 'Cierre aproximado de ' + fecha +
+    ': tanque Polaris ' + litros(modelo.tanque) +
+    ' L a las ' + modelo.fechaMedicion +
+    ' + compras futuras previstas D+1 - ventas estimadas ' +
+    formatoNumero(modelo.venta, 1) + ' L/día. Las compras programadas NO son entregas confirmadas.'
+}
+
+function avisoCompraFueraDeTiempo(estacion, producto) {
+  const hoy = fechaHoyISO()
+  if (!proyeccionDesdePolaris(estacion, producto, hoy)) return ''
+  const punto = numberValue(producto.punto_reorden)
+  if (!(punto > 0)) return ''
+  const limite = fechaMasDiasISO(hoy, PIPA_HORIZONTE_DIAS)
+  const primeraFechaReorden = rangoFechas(hoy, limite).find(fecha => {
+    const modelo = proyeccionDesdePolaris(estacion, producto, fecha)
+    return modelo && modelo.saldo <= punto
+  })
+  if (!primeraFechaReorden) return ''
+  const fechasCompras = state.compras.filter(item => {
+    const ids = obtenerIds(estacion, producto)
+    return Number(item.id_estacion) === ids.id_estacion &&
+      Number(item.id_producto) === ids.id_producto &&
+      numeroSql(item.litros_compra) > 0 &&
+      String(item.fecha_compra).slice(0, 10) >= hoy
+  }).map(item => String(item.fecha_compra).slice(0, 10)).sort()
+  const entrega = fechasCompras.length ? fechaMasDiasISO(fechasCompras[0], 1) : ''
+  if (entrega && entrega > primeraFechaReorden) {
+    return 'Atención: el punto de reorden se cruza aproximadamente el ' +
+      fechaBonita(primeraFechaReorden) + ', antes de la entrega prevista ' +
+      fechaBonita(entrega) + '.'
+  }
+  if (!entrega) {
+    return 'Punto de reorden previsto aproximadamente el ' +
+      fechaBonita(primeraFechaReorden) + '; sin compra programada antes de esa fecha.'
+  }
+  return ''
 }
 
 function crearMenuLateral() {
@@ -1906,6 +2023,32 @@ function inyectarEstilos() {
       color: #64748b;
       border-color: #cbd5e1;
     }
+    .saldo.riesgo-vacio {
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #f87171;
+      box-shadow: 0 0 0 1px #fecaca;
+    }
+    .reorden-aviso {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 10px;
+      line-height: 1.4;
+      font-weight: 700;
+    }
+    .reorden-aviso:empty { display: none; }
+    .proyeccion-fuente {
+      display: block;
+      font-size: 11px;
+      color: #475569;
+      text-align: center;
+      padding: 2px 8px 8px;
+      line-height: 1.5;
+    }
+    .saldo.sin-dato:not(.zero-muted) { background: #f1f5f9; }
 
     .compra-input {
       width: 100%;
@@ -2465,7 +2608,7 @@ function renderProyeccion(estacion) {
   const rows = estacion.productos.map(producto => {
     const celdas = fechas.map(fecha => {
       const saldo = saldoProyectado(estacion, producto, fecha)
-      const clase = claseEstatus(saldo, producto.punto_reorden)
+      const clase = claseSaldoEstimado(estacion, producto, fecha, saldo)
       const compra = compraDia(estacion, producto, fecha)
       const inventarioReal = inventarioRealDia(estacion, producto, fecha)
       const inventarioFicticio = esInventarioFicticio(estacion, producto, fecha)
@@ -2473,12 +2616,16 @@ function renderProyeccion(estacion) {
       const fechaAplicacionCompra = fechaMasDiasISO(fecha, 1)
       const inventarioDiaAplicacion = inventarioRealDia(estacion, producto, fechaAplicacionCompra)
       const compraSeSumaDiaSiguiente = compra > 0 && compraCuentaEnSaldo(fecha, fechaAplicacionCompra, inventarioDiaAplicacion)
-      const textoCompra = compraSeSumaDiaSiguiente ? 'Compra se suma mañana' : 'Compra no sumada'
+      const textoCompra = compraSeSumaDiaSiguiente ? 'Si llega mañana, se suman' : 'Compra pendiente de validar'
 
       return `
         <td>
           <div class="proj-cell">
-            <div class="saldo ${clase} ${valorCero(saldo) ? 'zero-muted' : ''}">${litros(saldo)}</div>
+            <div class="saldo ${clase} ${valorCero(saldo) ? 'zero-muted' : ''}"
+              data-proyeccion-estacion="${estacion.id_estacion}"
+              data-proyeccion-producto="${producto.id_producto}"
+              data-proyeccion-fecha="${fecha}"
+              title="${escaparHTML(tituloSaldoProyectado(estacion, producto, fecha))}">${litros(saldo)}</div>
             ${renderCompraInput(estacion, producto, fecha)}
             ${compra > 0 ? `<small>${textoCompra}: ${litros(compra)}</small>` : ''}
           </div>
@@ -2488,7 +2635,11 @@ function renderProyeccion(estacion) {
 
     return `
       <tr>
-        <td><span class="producto-chip ${producto.nombre}">${escaparHTML(producto.nombre)}</span></td>
+        <td>
+          <span class="producto-chip ${producto.nombre}">${escaparHTML(producto.nombre)}</span>
+          <div class="reorden-aviso" data-alerta-reorden-estacion="${estacion.id_estacion}"
+            data-alerta-reorden-producto="${producto.id_producto}">${escaparHTML(avisoCompraFueraDeTiempo(estacion, producto))}</div>
+        </td>
         ${celdas}
       </tr>
     `
@@ -2498,9 +2649,10 @@ function renderProyeccion(estacion) {
     <div>
       <div class="projection-header">
         <button class="week-nav" type="button" data-week-nav="-7">◀ Semana anterior</button>
-        <h3 class="table-title">Proyección ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
+        <h3 class="table-title">Proyección al cierre · ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
         <button class="week-nav" type="button" data-week-nav="7">Semana siguiente ▶</button>
       </div>
+      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Inventario inicial: cierre contable anterior. Desde hoy, los cierres se proyectan con Polaris vigente y ventas de 7 días; sin sensor válido, se muestra un respaldo contable. Las compras D+1 son entradas estimadas, NO confirmadas.</small>
       <div class="table-wrap">
         <table class="projection-table">
           <thead>
@@ -2737,6 +2889,33 @@ function mostrarEstadoConexionesPolaris() {
   }
 }
 
+function actualizarProyeccionDOM() {
+  // Actualizar las cifras al cambiar el tanque cada 15 s sin recrear las casillas
+  // de compra, para no interrumpir a quien está capturando.
+  document.querySelectorAll('[data-proyeccion-fecha]').forEach(elemento => {
+    const estacion = estaciones.find(item =>
+      Number(item.id_estacion) === Number(elemento.dataset.proyeccionEstacion))
+    const producto = estacion?.productos.find(item =>
+      Number(item.id_producto) === Number(elemento.dataset.proyeccionProducto))
+    if (!estacion || !producto) return
+    const fecha = elemento.dataset.proyeccionFecha
+    const valor = saldoProyectado(estacion, producto, fecha)
+    elemento.textContent = litros(valor)
+    elemento.title = tituloSaldoProyectado(estacion, producto, fecha)
+    elemento.classList.remove('ok', 'reorden', 'sin-dato', 'riesgo-vacio')
+    elemento.classList.add(claseSaldoEstimado(estacion, producto, fecha, valor))
+    elemento.classList.toggle('zero-muted', valorCero(valor))
+  })
+  document.querySelectorAll('[data-alerta-reorden-estacion]').forEach(elemento => {
+    const estacion = estaciones.find(item =>
+      Number(item.id_estacion) === Number(elemento.dataset.alertaReordenEstacion))
+    const producto = estacion?.productos.find(item =>
+      Number(item.id_producto) === Number(elemento.dataset.alertaReordenProducto))
+    if (!producto) return
+    elemento.textContent = avisoCompraFueraDeTiempo(estacion, producto)
+  })
+}
+
 function actualizarTanquesPolarisDOM() {
   document.querySelectorAll('[data-polaris-live-estacion]').forEach(elemento => {
     const idEstacion = Number(elemento.dataset.polarisLiveEstacion || 0)
@@ -2780,6 +2959,7 @@ function actualizarTanquesPolarisDOM() {
     }
     elemento.classList.toggle('capacidad-no-live', !lecturaVigentePolaris(estacion, producto))
   })
+  actualizarProyeccionDOM()
 }
 
 async function refrescarPolarisEnVivo() {
@@ -2897,27 +3077,10 @@ async function guardarCompra(input) {
   notify(litrosCompra > 0 ? 'Compra guardada' : 'Compra eliminada')
 }
 
-// Proyección operativa: hoy parte de la lectura física reciente de Polaris.
-// Las compras programadas del día D se incorporan el día D+1, como en la tabla.
-function cierreEstimadoDesdeTanque(estacion, producto, fechaObjetivo, hoy, volumen, ventaDia) {
-  const fechas = rangoFechas(hoy, fechaObjetivo)
-  if (!fechas.length || fechas[fechas.length - 1] !== fechaObjetivo) return null
-  let saldo = volumen
-  const ahora = new Date()
-  const restanteHoy = Math.max(0, Math.min(1,
-    (1440 - (ahora.getHours() * 60 + ahora.getMinutes())) / 1440
-  ))
+// El saldo de la tabla y la fecha de compra proceden del mismo modelo Polaris.
 
-  for (const fecha of fechas) {
-    if (fecha !== hoy) {
-      saldo += compraDia(estacion, producto, fechaMasDiasISO(fecha, -1))
-    }
-    saldo -= ventaDia * (fecha === hoy ? restanteHoy : 1)
-  }
-  return saldo
-}
-
-// Propuestas preventivas: una pipa por estación/combustible que la requiera.
+// Propuestas preventivas: tantas pipas como se necesiten durante el horizonte,
+ // sin duplicar día ni rebasar 95% de capacidad y reorden para cada producto.
 // Se considera que una compra programada en D llega al inicio de D+1;
 // si la logística real requiere más tiempo debe ajustarse el sistema.
 function propuestaPipaAutomatica() {
@@ -2945,9 +3108,8 @@ function propuestaPipaAutomatica() {
         continue
       }
 
-      const ventaSeguridad = diasDatos < 7
-        ? Math.max(promedio, numeroSql(promedioRegistro.total_ventas_7_dias || 0) / diasDatos)
-        : promedio
+      const ventaSeguridad = ventaDiariaEstimada(estacion, producto)
+      if (!(ventaSeguridad > 0)) continue
       // El punto de reorden CAPTURADO para cada estación/combustible es la referencia
       // principal. La demanda durante el tiempo de entrega + colchón puede adelantar
       // el pedido cuando el punto configurado es demasiado bajo para evitar desabasto.
@@ -2959,12 +3121,15 @@ function propuestaPipaAutomatica() {
       const maximoSeguro = capacidad * 0.95
       const reservaLogistica = ventaSeguridad * PIPA_DIAS_COLCHON
       const nivelProgramacion = Math.max(puntoReorden, reservaLogistica)
+      const simuladas = new Map()
 
       for (const fecha of fechas) {
         const entrega = fechaMasDiasISO(fecha, 1)
-        const cierrePedido = cierreEstimadoDesdeTanque(estacion, producto, fecha, hoy, volumen, ventaSeguridad)
-        const cierreEntrega = cierreEstimadoDesdeTanque(estacion, producto, entrega, hoy, volumen, ventaSeguridad)
-        if (cierrePedido === null || cierreEntrega === null) break
+        const modeloPedido = proyeccionDesdePolaris(estacion, producto, fecha, ventaSeguridad, simuladas)
+        const modeloEntrega = proyeccionDesdePolaris(estacion, producto, entrega, ventaSeguridad, simuladas)
+        if (!modeloPedido || !modeloEntrega) break
+        const cierrePedido = modeloPedido.saldo
+        const cierreEntrega = modeloEntrega.saldo
 
         if (cierrePedido <= 0) {
           avisos.push(nombre + ': podría agotarse ANTES de la fecha de entrega estimada; atención urgente')
@@ -2995,7 +3160,9 @@ function propuestaPipaAutomatica() {
           diasRestantes: volumen / ventaSeguridad,
           cobertura: cierreEntrega / ventaSeguridad
         })
-        break
+        // Recalcular los siguientes días con la pipa recién propuesta.
+        // Esto evita una sola compra por producto cuando hay ventas fuertes.
+        simuladas.set(fecha, PIPA_AUTOMATICA_LITROS)
       }
     }
   }
@@ -3058,10 +3225,20 @@ async function programarPipaAutomatica() {
 
     // Confirmación compacta. El detalle técnico se deja en consola y los
     // pedidos se reflejan en las casillas de la tabla, no en un bloque gigante.
+    const agrupadas = new Map()
+    for (const item of propuesta.candidatos) {
+      const nombre = item.estacion.nombre
+      agrupadas.set(nombre, (agrupadas.get(nombre) || 0) + 1)
+    }
+    const resumenEstaciones = [...agrupadas]
+      .map(([nombre, cantidad]) => nombre + ': ' + cantidad + ' pipa(s)')
+      .join('\n')
     const confirmar = window.confirm(
-      'Se programarán ' + propuesta.candidatos.length +
-      ' pipas de 20,000 L usando el punto de reorden y el consumo de cada estación. ' +
-      'Las fechas son estimadas; no se enviará ningún pedido al proveedor. ¿Guardar?'
+      'Se propone programar ' + propuesta.candidatos.length +
+      ' pipas de 20,000 L (' + litros(propuesta.candidatos.length * PIPA_AUTOMATICA_LITROS) +
+      ' L en total) considerando los puntos de reorden y compras existentes.\n\n' +
+      resumenEstaciones +
+      '\n\nLa entrega al día siguiente es estimada. NO se enviará ningún pedido al proveedor. ¿Guardar?'
     )
     if (!confirmar) {
       notify('Programación cancelada')
@@ -3070,8 +3247,13 @@ async function programarPipaAutomatica() {
 
     const guardadas = []
     const fallidas = []
+    const productosBloqueados = new Set()
     for (const item of propuesta.candidatos) {
       const ids = obtenerIds(item.estacion, item.producto)
+      const clave = ids.id_estacion + '/' + ids.id_producto
+      // Las siguientes pipas de un producto dependían de que sus anteriores
+      // se guardaran. Si falla una, no guardar después fechas basadas en ella.
+      if (productosBloqueados.has(clave)) continue
       try {
         await fetchJson('/api/pipas/compras', {
           method: 'POST',
@@ -3089,6 +3271,7 @@ async function programarPipaAutomatica() {
         guardadas.push(item)
       } catch (error) {
         // No sobrescribir una compra existente: el servidor responde 409.
+        productosBloqueados.add(clave)
         fallidas.push(item.estacion.nombre + ' / ' + item.producto.nombre + ': ' + error.message)
       }
     }
