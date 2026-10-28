@@ -291,7 +291,13 @@ function fondajePorcentajeValor(fondaje) {
 }
 
 function capacidadTanqueValor(producto) {
-  return numberValue(producto.capacidad_tanque ?? producto.fondaje)
+  // La capacidad del tanque también es un dato de Polaris. Si el servidor
+  // está desconectado, conservar la capacidad configurada para esa estación.
+  const estacion = estaciones.find(item => item.productos.includes(producto))
+  const capacidadPolaris = estacion ? capacidadTanquePolaris(estacion, producto) : null
+  return capacidadPolaris !== null && capacidadPolaris > 0
+    ? capacidadPolaris
+    : numberValue(producto.capacidad_tanque ?? producto.fondaje)
 }
 
 function fondajeValor(producto) {
@@ -352,10 +358,6 @@ function valorPolaris(row, campo) {
   if (!row || row[campo] === null || row[campo] === undefined || row[campo] === '') return null
   const numero = Number(row[campo])
   return Number.isFinite(numero) ? numero : null
-}
-
-function inventarioInicialPolaris(estacion, producto) {
-  return valorPolaris(buscarProductoPolaris(estacion, producto), 'inventario_inicial')
 }
 
 function tanqueActualPolaris(estacion, producto) {
@@ -425,13 +427,15 @@ function renderTanquePolaris(estacion, producto) {
   `
 }
 
-function fuenteInventarioInicialPolaris(estacion, producto) {
-  const row = buscarProductoPolaris(estacion, producto)
-  const valor = inventarioInicialPolaris(estacion, producto)
-  if (!row || valor === null) return ''
-
-  const fecha = fechaHoraBrevePolaris(row.fecha_cierre)
-  return `<div class="polaris-inicial-source">Polaris cierre${fecha ? ` ${escaparHTML(fecha)}` : ''}</div>`
+function fuenteInventarioInicial(estacion, producto) {
+  const row = buscarInventario(estacion, producto)
+  const capturado = Number(row?.id_inventario) > 0
+  const previo = row && numberValue(row.inventario_inicial) > 0
+  let texto = 'Sin inventario capturado'
+  if (capturado) texto = 'Inventarios Combustibles'
+  else if (previo) texto = 'Inventarios Combustibles · Cierre anterior'
+  else if (esInventarioFicticio(estacion, producto, state.fechaBase)) texto = 'Proyección desde Inventarios Combustibles'
+  return `<div class="polaris-inicial-source">${escaparHTML(texto)}</div>`
 }
 
 function idsBase(estacion, producto) {
@@ -491,9 +495,6 @@ function inventarioInicialRealBase(estacion, producto) {
 }
 
 function inventarioInicial(estacion, producto) {
-  const inventarioPolaris = inventarioInicialPolaris(estacion, producto)
-  if (inventarioPolaris !== null) return inventarioPolaris
-
   const inventarioDiaBase = inventarioRealDia(estacion, producto, state.fechaBase)
 
   if (inventarioDiaBase) return valorInventarioReal(inventarioDiaBase)
@@ -509,22 +510,8 @@ function fechaFilaInventario(row) {
 }
 
 function filaConInventario(row) {
-  if (!row) return false
-
-  // No usar venta/promedio como señal de inventario real: el API puede devolver
-  // filas de apoyo con venta, pero sin inventario capturado. Solo cuenta como
-  // real cuando hay id de inventario o algún saldo/inventario capturado.
-  return Number(row.id_inventario) > 0 ||
-    numberValue(row.inventario_inicial) > 0 ||
-    numberValue(row.saldo_inicial) > 0 ||
-    numberValue(row.saldoInicial) > 0 ||
-    numberValue(row.inicial) > 0 ||
-    numberValue(row.inventarioInicial) > 0 ||
-    numberValue(row.inventario_final) > 0 ||
-    numberValue(row.saldo_final) > 0 ||
-    numberValue(row.saldoFinal) > 0 ||
-    numberValue(row.final) > 0 ||
-    numberValue(row.inventarioFinal) > 0
+  // Una fila por CROSS JOIN o con cierre previo no es un inventario capturado.
+  return !!row && Number(row.id_inventario) > 0
 }
 
 function buscarInventarioEnLista(lista, estacion, producto, fecha) {
@@ -563,36 +550,16 @@ function fuentePromedio(estacion, producto) {
   return row ? String(row.fuente || row.origen || 'PENDIENTE_INICIAL').toUpperCase() : 'PENDIENTE_INICIAL'
 }
 
-function editableReal(valor) {
-  if (valor === true || valor === 1) return true
-  const texto = String(valor ?? '').toLowerCase()
-  return texto === '1' || texto === 'true' || texto === 'si' || texto === 'sí'
-}
-
-function promedioEditable(estacion, producto) {
-  const row = buscarPromedio(estacion, producto)
-  if (!row) return true
-  const fuente = fuentePromedio(estacion, producto)
-  return editableReal(row.editable) || fuente === 'PENDIENTE_INICIAL'
-}
-
 function claseFuente(estacion, producto) {
-  const fuente = fuentePromedio(estacion, producto)
-  if (fuente.includes('CALCULADO')) return 'calculado'
-  if (fuente.includes('MANUAL')) return 'manual'
-  return 'pendiente'
+  return buscarPromedio(estacion, producto) ? 'calculado' : 'pendiente'
 }
 
 function textoFuente(estacion, producto) {
-  const fuente = fuentePromedio(estacion, producto)
   const row = buscarPromedio(estacion, producto)
-  if (fuente.includes('REQUIERE')) return 'Capturar nuevo'
-  if (fuente.includes('CALCULADO')) return 'Calculado 15 días'
-  if (fuente.includes('MANUAL')) {
-    const dias = Number(row && row.dias_restantes)
-    return Number.isFinite(dias) && dias > 0 ? `Vigente ${dias} días` : 'Manual vigente'
-  }
-  return 'Captura inicial'
+  if (!row) return 'Promedio no disponible'
+  const dias = Number(row.dias_con_dato || 0)
+  if (dias === 0) return 'Sin registros en los 7 días'
+  return dias < 7 ? `Automático · 7 días (${dias}/7 registrados)` : 'Automático · 7 días'
 }
 
 function claseEstatus(inventario, punto) {
@@ -811,7 +778,6 @@ function inventarioInicialFicticio(estacion, producto, fecha) {
 function esInventarioFicticio(estacion, producto, fecha) {
   const fechaISO = String(fecha || '').slice(0, 10)
   if (!fechaISO || fechaISO !== state.fechaBase) return false
-  if (inventarioInicialPolaris(estacion, producto) !== null) return false
   if (inventarioRealDia(estacion, producto, fechaISO)) return false
   if (inventarioInicialRealBase(estacion, producto) > 0) return false
   return ultimoInventarioRealAntes(estacion, producto, fechaISO) !== null
@@ -830,12 +796,9 @@ function saldoProyectado(estacion, producto, fecha) {
     const compraAplicada = compraDiaAplicada(estacion, producto, fechaActual, inventarioDia)
 
     if (index === 0) {
-      const inventarioPolaris = inventarioInicialPolaris(estacion, producto)
-      const base = inventarioPolaris !== null
-        ? inventarioPolaris
-        : inventarioDia
-          ? valorInventarioReal(inventarioDia)
-          : inventarioInicial(estacion, producto)
+      const base = inventarioDia
+        ? valorInventarioReal(inventarioDia)
+        : inventarioInicial(estacion, producto)
 
       saldo = base + compraAplicada
       return
@@ -2124,7 +2087,7 @@ function crearLayout() {
           <div>
             <p class="pipas-eyebrow">GRUPO ARY GASOLINERAS</p>
             <h1>Proyección de Pipas</h1>
-            <p class="pipas-subtitle">Promedio manual vigente por 15 días con navegación por semanas</p>
+            <p class="pipas-subtitle">Promedio e inventario desde Inventarios Combustibles · Tanques en vivo desde Polaris</p>
           </div>
         </div>
         <div class="pipas-actions">
@@ -2132,7 +2095,6 @@ function crearLayout() {
             <input type="date" id="fechaBase">
           </label>
           <button class="pipas-btn gris" id="btnCargar" type="button">Cargar</button>
-          <button class="pipas-btn verde" id="btnGuardarPromedios" type="button">Guardar promedio manual</button>
         </div>
       </header>
 
@@ -2204,15 +2166,13 @@ function renderResumen() {
 }
 
 function renderPromedioInput(estacion, producto) {
-  const editable = promedioEditable(estacion, producto)
+  const row = buscarPromedio(estacion, producto)
   const valor = promedioVenta(estacion, producto)
-  const ids = obtenerIds(estacion, producto)
-  const fuente = fuentePromedio(estacion, producto)
-  const placeholder = fuente.includes('REQUIERE') ? 'Nuevo promedio' : 'Inicial'
-
+  const fechas = row ? `${row.fecha_inicio_ventas || ''} al ${row.fecha_fin_ventas || ''}` : 'Sin período disponible'
+  const detalle = `Ventas de Inventarios Combustibles: ${fechas}. Total: ${litros(row?.total_ventas_7_dias || 0)} L / 7 días. Promedio: ${formatoNumero(valor, 2)} L/día.`
   return `
-    <input class="promedio-input ${valorCero(valor) ? 'zero-muted' : ''}" type="text" inputmode="decimal" autocomplete="off" placeholder="${placeholder}" value="${valorCero(valor) ? '' : litros(valor)}" ${editable ? '' : 'disabled'} data-promedio="1" data-id-estacion="${ids.id_estacion}" data-id-producto="${ids.id_producto}">
-    <div class="source-badge ${claseFuente(estacion, producto)}">${textoFuente(estacion, producto)}</div>
+    <input class="promedio-input ${valorCero(valor) ? 'zero-muted' : ''}" type="text" readonly value="${litros(valor)}" title="${escaparHTML(detalle)}" aria-label="Promedio automático de los últimos 7 días">
+    <div class="source-badge ${claseFuente(estacion, producto)}" title="${escaparHTML(detalle)}">${textoFuente(estacion, producto)}</div>
   `
 }
 
@@ -2229,13 +2189,13 @@ function renderParametros(estacion) {
         <td>${renderTanquePolaris(estacion, producto)}</td>
         <td class="${valorCero(inventario) ? 'zero-muted' : ''}">
           <div>${litros(inventario)}</div>
-          ${fuenteInventarioInicialPolaris(estacion, producto)}
+          ${fuenteInventarioInicial(estacion, producto)}
         </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
-        <td class="${valorCero(capacidadTanque) ? 'zero-muted' : ''}">${litros(capacidadTanque)}</td>
-        <td class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
+        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadTanque) ? 'zero-muted' : ''}">${litros(capacidadTanque)}</td>
+        <td data-tanque-param="fondaje" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
         <td class="${valorCero(producto.punto_reorden) ? 'zero-muted' : ''}">${litros(producto.punto_reorden)}</td>
-        <td class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
+        <td data-tanque-param="maxima" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
       </tr>
     `
   }).join('')
@@ -2250,7 +2210,7 @@ function renderParametros(estacion) {
               <th>PARÁMETROS</th>
               <th>Tanque<br>ahora<br><small>EN VIVO</small></th>
               <th>Inventario<br>Inicial<br><small>${fechaBonita(state.fechaBase)}</small></th>
-              <th>Promedio<br>de venta</th>
+              <th>Promedio<br>de venta<br><small>7 días</small></th>
               <th>Capacidad<br>de tanque</th>
               <th>Fondaje</th>
               <th>Punto de<br>reorden</th>
@@ -2463,14 +2423,7 @@ function aplicarRespuestaPolaris(respuesta, soloActual = false) {
 
       if (!productoAnterior) return productoNuevo
 
-      return {
-        ...productoAnterior,
-        ...productoNuevo,
-        inventario_inicial: productoNuevo.inventario_inicial === null || productoNuevo.inventario_inicial === undefined
-          ? productoAnterior.inventario_inicial
-          : productoNuevo.inventario_inicial,
-        fecha_cierre: productoNuevo.fecha_cierre || productoAnterior.fecha_cierre || null
-      }
+      return { ...productoAnterior, ...productoNuevo }
     })
 
     for (const productoAnterior of productosAnteriores) {
@@ -2500,6 +2453,21 @@ function actualizarTanquesPolarisDOM() {
     elemento.textContent = textoTanquePolaris(estacion, producto)
     elemento.title = tituloTanquePolaris(estacion, producto)
     elemento.classList.toggle('sin-lectura', actual === null)
+  })
+
+  document.querySelectorAll('[data-tanque-param]').forEach(elemento => {
+    const estacion = estaciones.find(item => Number(item.id_estacion) === Number(elemento.dataset.estacion))
+    const producto = estacion?.productos.find(item => Number(item.id_producto) === Number(elemento.dataset.producto))
+    if (!producto) return
+    const valores = {
+      capacidad: capacidadTanqueValor(producto),
+      fondaje: fondajeValor(producto),
+      maxima: capacidadMaximaValor(producto)
+    }
+    const valor = valores[elemento.dataset.tanqueParam]
+    if (valor === undefined) return
+    elemento.textContent = litros(valor)
+    elemento.classList.toggle('zero-muted', valorCero(valor))
   })
 }
 
@@ -2562,26 +2530,11 @@ async function cargarDatos() {
 
     render()
 
-    if (!state.inventarios.length) {
-      const hayInventarioPolaris = estaciones.some(estacion => {
-        return estacion.productos.some(producto => inventarioInicialPolaris(estacion, producto) !== null)
-      })
-
-      if (hayInventarioPolaris) {
-        notify(`Proyección cargada desde cierres de Polaris para ${fechaBonita(state.fechaBase)}`)
-        return
-      }
-
-      const hayInventarioFicticio = estaciones.some(estacion => {
-        return estacion.productos.some(producto => esInventarioFicticio(estacion, producto, state.fechaBase))
-      })
-
-      if (hayInventarioFicticio) {
-        notify(`Proyección cargada con inventario ficticio para ${fechaBonita(state.fechaBase)}`)
-        return
-      }
-
-      notify(`No hay inventario para ${fechaBonita(state.fechaBase)}`)
+    const hayInicial = estaciones.some(estacion => estacion.productos.some(producto => {
+      return inventarioInicial(estacion, producto) !== 0
+    }))
+    if (!hayInicial) {
+      notify(`No hay inventario en Inventarios Combustibles para ${fechaBonita(state.fechaBase)}`)
       return
     }
 
@@ -2593,34 +2546,6 @@ async function cargarDatos() {
   } finally {
     state.cargando = false
   }
-}
-
-async function guardarPromedios() {
-  const registros = $$('.promedio-input[data-promedio="1"]')
-    .filter(input => !input.disabled)
-    .map(input => ({
-      id_estacion: Number(input.dataset.idEstacion),
-      id_producto: Number(input.dataset.idProducto),
-      promedio_venta: numberValue(input.value)
-    }))
-    .filter(item => item.id_estacion && item.id_producto && item.promedio_venta > 0)
-
-  if (!registros.length) {
-    notify('Captura al menos un promedio mayor a 0')
-    return
-  }
-
-  await fetchJson('/api/pipas/promedios', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      fecha: state.fechaBase,
-      registros
-    })
-  })
-
-  notify('Promedios guardados')
-  await cargarDatos()
 }
 
 function compraInputALitros(valor) {
@@ -3928,15 +3853,6 @@ function enlazarEventos() {
     await cargarDatos()
   })
 
-  $('#btnGuardarPromedios').addEventListener('click', async () => {
-    try {
-      await guardarPromedios()
-    } catch (error) {
-      notify(error.message || 'No se pudieron guardar los promedios')
-    }
-  })
-
-
   const exportRobot = $('#exportRobot')
   const exportRobotToggle = $('#exportRobotToggle')
   const exportRobotClose = $('#exportRobotClose')
@@ -4019,13 +3935,13 @@ function enlazarEventos() {
   })
 
   $('#contenedorPipas').addEventListener('focusin', event => {
-    const input = event.target.closest('.promedio-input, .compra-input')
+    const input = event.target.closest('.compra-input')
     if (!input || input.disabled) return
     prepararInputNumero(input)
   })
 
   $('#contenedorPipas').addEventListener('focusout', async event => {
-    const input = event.target.closest('.promedio-input, .compra-input')
+    const input = event.target.closest('.compra-input')
     if (!input || input.disabled) return
     formatearInputNumero(input)
 

@@ -483,81 +483,15 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
         ORDER BY t.NoProducto;
       `)
 
-    let cierres = []
-    const fechaContableActual = String(meta.fecha_contable || '').slice(0, 10)
-    const puedeUsarCierre = !fechaContableActual || fechaObjetivo <= fechaContableActual
-
-    if (!soloActual && puedeUsarCierre) {
-      const cierresResult = await crearRequestPool(p)
-        .input('no_es', sql.Int, noEs)
-        .input('fecha_objetivo', sql.Date, fechaObjetivo)
-        .query(`
-          SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
-          ;WITH UltimaLecturaTanque AS (
-            SELECT
-              e.NoTanque,
-              e.NoProducto,
-              e.Volumen,
-              e.FechaHora,
-              ROW_NUMBER() OVER (
-                PARTITION BY e.NoTanque
-                ORDER BY e.FechaHora DESC
-              ) AS rn
-            FROM dbo.Existencias e WITH (NOLOCK)
-            WHERE e.NoES = @no_es
-              AND e.FechaContable >= DATEADD(DAY, -1, @fecha_objetivo)
-              AND e.FechaContable < @fecha_objetivo
-          )
-          SELECT
-            u.NoProducto AS no_producto,
-            p.Producto AS nombre_producto,
-            CAST(SUM(CAST(ISNULL(u.Volumen, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS inventario_inicial,
-            CONVERT(VARCHAR(19), MAX(u.FechaHora), 120) AS fecha_cierre
-          FROM UltimaLecturaTanque u
-          INNER JOIN dbo.Productos p WITH (NOLOCK)
-            ON p.NoProducto = u.NoProducto
-          WHERE u.rn = 1
-            AND p.TipoProducto = 'C'
-          GROUP BY
-            u.NoProducto,
-            p.Producto
-          ORDER BY u.NoProducto;
-        `)
-
-      cierres = cierresResult.recordset
-    }
-
-    const productos = new Map()
-
-    for (const row of actualesResult.recordset) {
-      productos.set(String(row.no_producto), {
-        no_producto: Number(row.no_producto),
-        nombre_producto: row.nombre_producto,
-        tanque_actual: row.tanque_actual === null ? null : Number(row.tanque_actual),
-        capacidad_tanque: row.capacidad_tanque === null ? null : Number(row.capacidad_tanque),
-        fecha_tanque: row.fecha_tanque || null,
-        inventario_inicial: null,
-        fecha_cierre: null
-      })
-    }
-
-    for (const row of cierres) {
-      const key = String(row.no_producto)
-      const actual = productos.get(key) || {
-        no_producto: Number(row.no_producto),
-        nombre_producto: row.nombre_producto,
-        tanque_actual: null,
-        capacidad_tanque: null,
-        fecha_tanque: null
-      }
-
-      productos.set(key, {
-        ...actual,
-        inventario_inicial: row.inventario_inicial === null ? null : Number(row.inventario_inicial),
-        fecha_cierre: row.fecha_cierre || null
-      })
-    }
+    // Polaris solamente aporta información de tanques en vivo.
+    // Inventario inicial y ventas vienen de Inventarios Combustibles.
+    const productos = actualesResult.recordset.map(row => ({
+      no_producto: Number(row.no_producto),
+      nombre_producto: row.nombre_producto,
+      tanque_actual: row.tanque_actual === null ? null : Number(row.tanque_actual),
+      capacidad_tanque: row.capacidad_tanque === null ? null : Number(row.capacidad_tanque),
+      fecha_tanque: row.fecha_tanque || null
+    }))
 
     return {
       server,
@@ -568,7 +502,7 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
       fecha_contable: meta.fecha_contable || '',
       turno_actual: meta.turno_actual,
       fecha_hora_estacion: meta.fecha_hora_estacion || null,
-      productos: [...productos.values()]
+      productos
     }
   }
 
@@ -1287,53 +1221,48 @@ const preciosParaGuardar = hayPrecioDetalleCapturado
 
 app.get('/api/pipas/promedios', async (req, res) => {
   try {
-    const fecha = req.query.fecha || new Date().toISOString().slice(0, 10)
+    const fecha = req.query.fecha || fechaISO(new Date())
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(fecha))) {
+      return res.status(400).json({ ok: false, message: 'Fecha inválida' })
+    }
     const p = await getPool(req)
-
     const result = await p.request()
       .input('fecha', sql.Date, fecha)
       .query(`
+        SET LOCK_TIMEOUT 10000;
+        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+        ;WITH FechaCorte AS (
+          -- Una proyección futura conserva el último promedio disponible.
+          SELECT CASE
+            WHEN @fecha > CAST(GETDATE() AS DATE) THEN CAST(GETDATE() AS DATE)
+            ELSE @fecha
+          END AS fecha_corte
+        )
         SELECT
           e.id_estacion,
           e.nombre_estacion,
           pr.id_producto,
           pr.nombre_producto,
-          manual.id_pipas_promedio_manual,
-          CONVERT(VARCHAR(10), manual.fecha_promedio, 23) AS fecha_promedio_manual,
-          ISNULL(manual.promedio_venta, 0) AS promedio_venta_manual,
-          CONVERT(DECIMAL(18,3), ISNULL(manual.promedio_venta, 0)) AS promedio_venta,
-          CASE
-            WHEN manual.id_pipas_promedio_manual IS NULL THEN 'PENDIENTE_INICIAL'
-            WHEN DATEDIFF(DAY, manual.fecha_promedio, @fecha) >= 15 THEN 'REQUIERE_NUEVO_PROMEDIO'
-            ELSE 'MANUAL_VIGENTE'
-          END AS fuente,
-          CASE
-            WHEN manual.id_pipas_promedio_manual IS NULL THEN CAST(1 AS BIT)
-            WHEN DATEDIFF(DAY, manual.fecha_promedio, @fecha) >= 15 THEN CAST(1 AS BIT)
-            ELSE CAST(0 AS BIT)
-          END AS editable,
-          ISNULL(DATEDIFF(DAY, manual.fecha_promedio, @fecha), 0) AS dias_desde_manual,
-          CASE
-            WHEN manual.id_pipas_promedio_manual IS NULL THEN 0
-            WHEN 15 - DATEDIFF(DAY, manual.fecha_promedio, @fecha) > 0 THEN 15 - DATEDIFF(DAY, manual.fecha_promedio, @fecha)
-            ELSE 0
-          END AS dias_restantes,
-          CONVERT(VARCHAR(10), DATEADD(DAY, 15, manual.fecha_promedio), 23) AS fecha_siguiente_promedio
-        FROM dbo.Estaciones e
-        CROSS JOIN dbo.Productos pr
+          CAST(ISNULL(ventas.total_ventas_7_dias, 0) / 7.0 AS DECIMAL(18,3)) AS promedio_venta,
+          CAST(ISNULL(ventas.total_ventas_7_dias, 0) AS DECIMAL(18,3)) AS total_ventas_7_dias,
+          ISNULL(ventas.dias_con_dato, 0) AS dias_con_dato,
+          CONVERT(VARCHAR(10), DATEADD(DAY, -7, f.fecha_corte), 23) AS fecha_inicio_ventas,
+          CONVERT(VARCHAR(10), DATEADD(DAY, -1, f.fecha_corte), 23) AS fecha_fin_ventas,
+          'INVENTARIOS_7_DIAS' AS fuente,
+          CAST(0 AS BIT) AS editable
+        FROM dbo.Estaciones e WITH (NOLOCK)
+        CROSS JOIN dbo.Productos pr WITH (NOLOCK)
+        CROSS JOIN FechaCorte f
         OUTER APPLY (
-          SELECT TOP 1
-            m.id_pipas_promedio_manual,
-            m.fecha_promedio,
-            m.promedio_venta
-          FROM dbo.PipasPromediosVentaManual m
-          WHERE m.id_estacion = e.id_estacion
-            AND m.id_producto = pr.id_producto
-            AND m.fecha_promedio <= @fecha
-          ORDER BY
-            m.fecha_promedio DESC,
-            m.id_pipas_promedio_manual DESC
-        ) manual
+          SELECT
+            SUM(CAST(ISNULL(i.venta, 0) AS DECIMAL(18,3))) AS total_ventas_7_dias,
+            COUNT(DISTINCT CONVERT(DATE, i.fecha)) AS dias_con_dato
+          FROM dbo.Inventarios i WITH (NOLOCK)
+          WHERE i.id_estacion = e.id_estacion
+            AND i.id_producto = pr.id_producto
+            AND i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
+            AND i.fecha < f.fecha_corte
+        ) ventas
         WHERE e.activa = 1
           AND pr.activo = 1
         ORDER BY
@@ -1345,165 +1274,20 @@ app.get('/api/pipas/promedios', async (req, res) => {
             ELSE 4
           END
       `)
-
     res.json(result.recordset)
   } catch (error) {
-    console.log('ERROR PIPAS PROMEDIOS:', error.message)
-
-    res.status(500).json({
-      ok: false,
-      message: error.message
-    })
+    console.log('ERROR PIPAS PROMEDIOS (7 DÍAS):', error.message)
+    res.status(500).json({ ok: false, message: error.message })
   }
 })
 
-app.post('/api/pipas/promedios', async (req, res) => {
-  const fecha = req.body.fecha
-  const registros = Array.isArray(req.body.registros) ? req.body.registros : []
-
-  try {
-    if (!fecha) {
-      throw new Error('No se recibió la fecha')
-    }
-
-    const p = await getPool(req)
-    let guardados = 0
-    let bloqueados = 0
-
-    for (const item of registros) {
-      const idEstacion = Number(item.id_estacion)
-      const idProducto = Number(item.id_producto)
-      const promedioVenta = numberValue(item.promedio_venta)
-
-      if (!idEstacion || !idProducto || promedioVenta <= 0) {
-        continue
-      }
-
-      const actual = await p.request()
-        .input('fecha', sql.Date, fecha)
-        .input('id_estacion', sql.Int, idEstacion)
-        .input('id_producto', sql.Int, idProducto)
-        .query(`
-          SELECT TOP 1
-            id_pipas_promedio_manual,
-            fecha_promedio
-          FROM dbo.PipasPromediosVentaManual
-          WHERE id_estacion = @id_estacion
-            AND id_producto = @id_producto
-            AND fecha_promedio <= @fecha
-          ORDER BY
-            fecha_promedio DESC,
-            id_pipas_promedio_manual DESC
-        `)
-
-      const existenteEnFecha = await p.request()
-        .input('fecha', sql.Date, fecha)
-        .input('id_estacion', sql.Int, idEstacion)
-        .input('id_producto', sql.Int, idProducto)
-        .query(`
-          SELECT TOP 1 id_pipas_promedio_manual
-          FROM dbo.PipasPromediosVentaManual
-          WHERE fecha_promedio = @fecha
-            AND id_estacion = @id_estacion
-            AND id_producto = @id_producto
-        `)
-
-      if (existenteEnFecha.recordset.length > 0) {
-        await p.request()
-          .input('id_pipas_promedio_manual', sql.Int, existenteEnFecha.recordset[0].id_pipas_promedio_manual)
-          .input('promedio_venta', sql.Decimal(18, 3), promedioVenta)
-          .query(`
-            UPDATE dbo.PipasPromediosVentaManual
-            SET
-              promedio_venta = @promedio_venta,
-              actualizado_en = SYSDATETIME()
-            WHERE id_pipas_promedio_manual = @id_pipas_promedio_manual
-          `)
-
-        guardados++
-        continue
-      }
-
-      if (actual.recordset.length === 0 || actual.recordset[0].fecha_promedio === null) {
-        await p.request()
-          .input('fecha', sql.Date, fecha)
-          .input('id_estacion', sql.Int, idEstacion)
-          .input('id_producto', sql.Int, idProducto)
-          .input('promedio_venta', sql.Decimal(18, 3), promedioVenta)
-          .query(`
-            INSERT INTO dbo.PipasPromediosVentaManual (
-              id_estacion,
-              id_producto,
-              fecha_promedio,
-              promedio_venta
-            )
-            VALUES (
-              @id_estacion,
-              @id_producto,
-              @fecha,
-              @promedio_venta
-            )
-          `)
-
-        guardados++
-        continue
-      }
-
-      const vencido = await p.request()
-        .input('fecha', sql.Date, fecha)
-        .input('id_pipas_promedio_manual', sql.Int, actual.recordset[0].id_pipas_promedio_manual)
-        .query(`
-          SELECT CASE
-            WHEN DATEDIFF(DAY, fecha_promedio, @fecha) >= 15 THEN 1
-            ELSE 0
-          END AS vencido
-          FROM dbo.PipasPromediosVentaManual
-          WHERE id_pipas_promedio_manual = @id_pipas_promedio_manual
-        `)
-
-      if (Number(vencido.recordset[0].vencido) === 1) {
-        await p.request()
-          .input('fecha', sql.Date, fecha)
-          .input('id_estacion', sql.Int, idEstacion)
-          .input('id_producto', sql.Int, idProducto)
-          .input('promedio_venta', sql.Decimal(18, 3), promedioVenta)
-          .query(`
-            INSERT INTO dbo.PipasPromediosVentaManual (
-              id_estacion,
-              id_producto,
-              fecha_promedio,
-              promedio_venta
-            )
-            VALUES (
-              @id_estacion,
-              @id_producto,
-              @fecha,
-              @promedio_venta
-            )
-          `)
-
-        guardados++
-      } else {
-        bloqueados++
-      }
-    }
-
-    res.json({
-      ok: true,
-      message: bloqueados > 0 ? 'Promedios guardados. Algunos todavía no cumplen 15 días.' : 'Promedios guardados correctamente',
-      guardados,
-      bloqueados
-    })
-  } catch (error) {
-    console.log('ERROR GUARDAR PIPAS PROMEDIOS:', error.message)
-
-    res.status(500).json({
-      ok: false,
-      message: error.message
-    })
-  }
+// La captura manual deja de aplicarse.
+app.post('/api/pipas/promedios', (_req, res) => {
+  res.status(410).json({
+    ok: false,
+    message: 'El promedio se calcula automáticamente con las ventas de los 7 días anteriores en Inventarios Combustibles.'
+  })
 })
-
 
 app.get('/api/pipas/compras', async (req, res) => {
   try {
