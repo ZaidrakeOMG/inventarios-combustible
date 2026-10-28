@@ -6,6 +6,7 @@ const COLOR_EXPORT_LILA_SUAVE = '#f8f7fb'
 const COLOR_EXPORT_BLANCO = '#ffffff'
 const COLOR_EXPORT_GRIS = '#d9d9d9'
 const POLARIS_LIVE_REFRESH_MS = 15000
+const PIPA_AUTOMATICA_LITROS = 20000
 
 const estaciones = [
   {
@@ -98,6 +99,7 @@ const state = {
   polarisEstaciones: [],
   polarisErrores: [],
   polarisActualizando: false,
+  autoProgramando: false,
   imagenCompras: {
     inicio: '',
     fin: '',
@@ -328,15 +330,10 @@ function notify(message) {
 }
 
 function estacionCoincide(row, estacion) {
+  // No usar startsWith: ARY I es prefijo de ARY II/III/IV y
+  // mostraba el mismo tanque/capacidad en estaciones diferentes.
   const nombre = normalizarTexto(row.nombre_estacion || row.estacion || row.estacion_nombre || '')
-  if (!nombre) return false
-
-  return estacion.aliases.some(alias => {
-    const aliasNormalizado = normalizarTexto(alias)
-    return nombre === aliasNormalizado ||
-      nombre.startsWith(aliasNormalizado) ||
-      aliasNormalizado.startsWith(nombre)
-  })
+  return !!nombre && estacion.aliases.some(alias => normalizarTexto(alias) === nombre)
 }
 
 function buscarEstacionPolaris(estacion) {
@@ -408,7 +405,8 @@ function tituloTanquePolaris(estacion, producto) {
   return [
     'Lectura actual del tanque en Polaris',
     fecha ? `Actualizado: ${fecha}` : '',
-    servidor ? `Servidor: ${servidor}` : ''
+    servidor ? `Servidor: ${servidor}` : '',
+    Number(row.numero_tanques) > 0 ? `Tanques registrados: ${Number(row.numero_tanques)}` : ''
   ].filter(Boolean).join(' · ')
 }
 
@@ -425,6 +423,16 @@ function renderTanquePolaris(estacion, producto) {
       title="${escaparHTML(tituloTanquePolaris(estacion, producto))}"
     >${escaparHTML(textoTanquePolaris(estacion, producto))}</span>
   `
+}
+
+function tituloCapacidadTanque(estacion, producto) {
+  const capacidad = capacidadTanquePolaris(estacion, producto)
+  const row = buscarProductoPolaris(estacion, producto)
+  const origen = capacidad !== null && capacidad > 0
+    ? 'Capacidad desde Polaris en vivo'
+    : 'Capacidad de respaldo configurada (sin lectura vigente de Polaris)'
+  const tanques = Number(row?.numero_tanques || 0)
+  return origen + (tanques > 0 ? ' · ' + tanques + ' tanque(s)' : '')
 }
 
 function fuenteInventarioInicial(estacion, producto) {
@@ -1330,6 +1338,26 @@ function inyectarEstilos() {
       background: linear-gradient(135deg, #64748b, #334155);
     }
 
+    .pipa-auto-info {
+      padding: 14px 17px;
+      margin: 4px 0 16px;
+      border: 1px solid #a7f3d0;
+      border-radius: 14px;
+      background: #ecfdf5;
+      color: #065f46;
+      font-weight: 750;
+    }
+    .pipa-auto-info[hidden] { display: none !important; }
+    .capacidad-no-live {
+      background: #fff7ed !important;
+      color: #9a3412 !important;
+    }
+    .compra-input.auto-pipa-seleccionada {
+      border: 3px solid #16a34a !important;
+      background: #dcfce7 !important;
+      box-shadow: 0 0 0 4px rgba(22,163,74,.15);
+    }
+    #btnProgramarPipa:disabled { opacity: .65; cursor: wait; }
     .pipas-resumen {
       display: grid;
       grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -2095,9 +2123,11 @@ function crearLayout() {
             <input type="date" id="fechaBase">
           </label>
           <button class="pipas-btn gris" id="btnCargar" type="button">Cargar</button>
+          <button class="pipas-btn verde" id="btnProgramarPipa" type="button">Programar pipa · 20,000 L</button>
         </div>
       </header>
 
+      <div id="pipaAutomaticaResultado" class="pipa-auto-info" role="status" hidden></div>
       <main class="station-grid" id="contenedorPipas"></main>
     </div>
     <div id="toast"></div>
@@ -2192,7 +2222,7 @@ function renderParametros(estacion) {
           ${fuenteInventarioInicial(estacion, producto)}
         </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
-        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadTanque) ? 'zero-muted' : ''}">${litros(capacidadTanque)}</td>
+        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${capacidadTanquePolaris(estacion, producto) > 0 ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
         <td data-tanque-param="fondaje" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
         <td class="${valorCero(producto.punto_reorden) ? 'zero-muted' : ''}">${litros(producto.punto_reorden)}</td>
         <td data-tanque-param="maxima" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
@@ -2391,53 +2421,10 @@ async function cargarPolarisSeguro(soloActual = false) {
 }
 
 function aplicarRespuestaPolaris(respuesta, soloActual = false) {
-  const nuevas = Array.isArray(respuesta?.stations) ? respuesta.stations : []
+  // Cada consulta es una instantánea nueva. Evitar combinar servidores por
+  // NoES (puede repetirse entre bases Polaris) o conservar lecturas caídas.
+  state.polarisEstaciones = Array.isArray(respuesta?.stations) ? respuesta.stations : []
   state.polarisErrores = Array.isArray(respuesta?.errors) ? respuesta.errors : []
-
-  if (!soloActual) {
-    state.polarisEstaciones = nuevas
-    return
-  }
-
-  for (const nueva of nuevas) {
-    const indice = state.polarisEstaciones.findIndex(actual => {
-      if (nueva.server && actual.server === nueva.server) return true
-      if (nueva.no_es && Number(actual.no_es) === Number(nueva.no_es)) return true
-      return normalizarTexto(actual.nombre_estacion) === normalizarTexto(nueva.nombre_estacion)
-    })
-
-    if (indice < 0) {
-      state.polarisEstaciones.push(nueva)
-      continue
-    }
-
-    const anterior = state.polarisEstaciones[indice]
-    const productosAnteriores = Array.isArray(anterior.productos) ? anterior.productos : []
-    const productosNuevos = Array.isArray(nueva.productos) ? nueva.productos : []
-
-    const productos = productosNuevos.map(productoNuevo => {
-      const clave = productoKey(productoNuevo.nombre_producto || '')
-      const productoAnterior = productosAnteriores.find(item => {
-        return productoKey(item.nombre_producto || '') === clave
-      })
-
-      if (!productoAnterior) return productoNuevo
-
-      return { ...productoAnterior, ...productoNuevo }
-    })
-
-    for (const productoAnterior of productosAnteriores) {
-      const clave = productoKey(productoAnterior.nombre_producto || '')
-      const existe = productos.some(item => productoKey(item.nombre_producto || '') === clave)
-      if (!existe) productos.push(productoAnterior)
-    }
-
-    state.polarisEstaciones[indice] = {
-      ...anterior,
-      ...nueva,
-      productos
-    }
-  }
 }
 
 function actualizarTanquesPolarisDOM() {
@@ -2468,6 +2455,8 @@ function actualizarTanquesPolarisDOM() {
     if (valor === undefined) return
     elemento.textContent = litros(valor)
     elemento.classList.toggle('zero-muted', valorCero(valor))
+    elemento.title = tituloCapacidadTanque(estacion, producto)
+    elemento.classList.toggle('capacidad-no-live', !(capacidadTanquePolaris(estacion, producto) > 0))
   })
 }
 
@@ -2582,6 +2571,126 @@ async function guardarCompra(input) {
 
   await cargarDatos()
   notify(litrosCompra > 0 ? 'Compra guardada' : 'Compra eliminada')
+}
+
+function propuestaPipaAutomatica() {
+  const hoy = fechaHoyISO()
+  const fechas = rangoFechas(state.fechaInicio, state.fechaFin).filter(fecha => fecha >= hoy)
+  const candidatos = []
+
+  for (const estacion of estaciones) {
+    for (const producto of estacion.productos) {
+      const promedio = promedioVenta(estacion, producto)
+      const promedioRegistro = buscarPromedio(estacion, producto)
+      const inventario = inventarioInicial(estacion, producto)
+      const capacidadPolaris = capacidadTanquePolaris(estacion, producto)
+      const tanqueActual = tanqueActualPolaris(estacion, producto)
+
+      // No crear compras basadas en inventarios ficticios sin respaldo
+      // ni en capacidades estáticas cuando Polaris no responde.
+      if (inventario <= 0 || promedio <= 0 || !promedioRegistro || Number(promedioRegistro.dias_con_dato) === 0) continue
+      if (!(capacidadPolaris > 0) || tanqueActual === null) continue
+
+      const capacidadSegura = capacidadPolaris * 0.95
+      for (const fecha of fechas) {
+        if (compraDia(estacion, producto, fecha) > 0) continue
+
+        // La compra capturada el día D entra al saldo del día D+1.
+        const fechaAplicacion = fechaMasDiasISO(fecha, 1)
+        if (inventarioRealDia(estacion, producto, fechaAplicacion)) continue
+
+        const saldo = saldoProyectado(estacion, producto, fechaAplicacion)
+        if (!Number.isFinite(saldo) || saldo > numberValue(producto.punto_reorden)) continue
+
+        // Contrastar proyección con la lectura física reciente para no
+        // asignar 20,000 litros si el tanque puede quedar por encima del 95%.
+        const diasHastaEntrega = Math.max(0, diffDias(hoy, fechaAplicacion))
+        const tanqueEstimado = Math.max(0, tanqueActual - promedio * diasHastaEntrega)
+        if (Math.max(saldo, tanqueEstimado) + PIPA_AUTOMATICA_LITROS > capacidadSegura) continue
+
+        candidatos.push({
+          estacion,
+          producto,
+          fecha,
+          saldo,
+          cobertura: saldo / promedio
+        })
+      }
+    }
+  }
+
+  // Primero la fecha más próxima; a igual fecha, el combustible
+  // con menos días de existencia y mayor urgencia.
+  candidatos.sort((a, b) =>
+    a.fecha.localeCompare(b.fecha) ||
+    a.cobertura - b.cobertura ||
+    a.estacion.id_estacion - b.estacion.id_estacion
+  )
+  return candidatos[0] || null
+}
+
+async function programarPipaAutomatica() {
+  if (state.cargando || state.autoProgramando) {
+    notify('La información aún se está actualizando')
+    return
+  }
+
+  const destino = propuestaPipaAutomatica()
+  const resultado = $('#pipaAutomaticaResultado')
+
+  if (!destino) {
+    if (resultado) {
+      resultado.hidden = false
+      resultado.textContent = 'No hay un destino que requiera 20,000 L y tenga espacio seguro confirmado en Polaris para las fechas visibles. Puedes programar manualmente en las casillas Compra.'
+    }
+    notify('Sin destino apto para programar 20,000 L')
+    return
+  }
+
+  const ids = obtenerIds(destino.estacion, destino.producto)
+  const boton = $('#btnProgramarPipa')
+  state.autoProgramando = true
+  if (boton) boton.disabled = true
+
+  try {
+    await fetchJson('/api/pipas/compras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fecha_compra: destino.fecha,
+        id_estacion: ids.id_estacion,
+        id_producto: ids.id_producto,
+        litros_compra: PIPA_AUTOMATICA_LITROS,
+        observaciones: 'Programación automática por proyección de 7 días'
+      })
+    })
+
+    await cargarDatos()
+    const textoDestino = destino.estacion.nombre + ' · ' + destino.producto.nombre +
+      ' · ' + fechaBonita(destino.fecha) + ' · ' + litros(PIPA_AUTOMATICA_LITROS) +
+      ' L. Compra programada; puedes modificar la cantidad directamente en su casilla Compra.'
+    if (resultado) {
+      resultado.textContent = textoDestino
+      resultado.hidden = false
+    }
+
+    const input = Array.from(document.querySelectorAll('.compra-input')).find(celda =>
+      Number(celda.dataset.idEstacion) === ids.id_estacion &&
+      Number(celda.dataset.idProducto) === ids.id_producto &&
+      celda.dataset.fechaCompra === destino.fecha
+    )
+    if (input) {
+      input.classList.add('auto-pipa-seleccionada')
+      input.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+    }
+    notify('Programada: ' + destino.estacion.nombre + ' · ' + destino.producto.nombre)
+  } catch (error) {
+    console.error('ERROR PROGRAMAR PIPA:', error)
+    notify(error.message || 'No se pudo programar la pipa')
+  } finally {
+    state.autoProgramando = false
+    if (boton) boton.disabled = false
+  }
 }
 
 function prepararInputNumero(input) {
@@ -3846,6 +3955,7 @@ async function exportarPDF() {
 }
 
 function enlazarEventos() {
+  $('#btnProgramarPipa').addEventListener('click', programarPipaAutomatica)
   $('#btnCargar').addEventListener('click', async () => {
     state.fechaBase = $('#fechaBase').value || fechaHoyISO()
     state.historialSemanas = []
