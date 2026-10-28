@@ -3232,13 +3232,13 @@ async function programarPipaAutomatica() {
     }
     const resumenEstaciones = [...agrupadas]
       .map(([nombre, cantidad]) => nombre + ': ' + cantidad + ' pipa(s)')
-      .join('\\n')
+      .join('\n')
     const confirmar = window.confirm(
       'Se propone programar ' + propuesta.candidatos.length +
       ' pipas de 20,000 L (' + litros(propuesta.candidatos.length * PIPA_AUTOMATICA_LITROS) +
-      ' L en total) considerando los puntos de reorden y compras existentes.\\n\\n' +
+      ' L en total) considerando los puntos de reorden y compras existentes.\n\n' +
       resumenEstaciones +
-      '\\n\\nLa entrega al día siguiente es estimada. NO se enviará ningún pedido al proveedor. ¿Guardar?'
+      '\n\nLa entrega al día siguiente es estimada. NO se enviará ningún pedido al proveedor. ¿Guardar?'
     )
     if (!confirmar) {
       notify('Programación cancelada')
