@@ -79,7 +79,7 @@ const REMOTE_SQL_USER = process.env.REMOTE_SQL_USER || process.env.SQL_USER || '
 const REMOTE_SQL_PASSWORD = process.env.REMOTE_SQL_PASSWORD || process.env.SQL_PASSWORD || ''
 const REMOTE_SQL_DATABASE = process.env.REMOTE_SQL_DATABASE || process.env.SQL_DATABASE || ''
 const REMOTE_SQL_CONNECTION_TIMEOUT = Number.parseInt(process.env.REMOTE_SQL_CONNECTION_TIMEOUT, 10) || 5000
-const POLARIS_DATABASE = process.env.POLARIS_DATABASE || process.env.REMOTE_SQL_DATABASE || 'Polaris'
+const POLARIS_DATABASE = process.env.POLARIS_DATABASE || 'Polaris'
 
 function sqlTargetFromRequest(req) {
   return {
@@ -1266,13 +1266,24 @@ app.get('/api/pipas/promedios', async (req, res) => {
       .input('fecha', sql.Date, fecha)
       .query(`
         SET LOCK_TIMEOUT 10000;
-        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+        SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
         ;WITH FechaCorte AS (
           -- Una proyección futura conserva el último promedio disponible.
           SELECT CASE
             WHEN @fecha > CAST(GETDATE() AS DATE) THEN CAST(GETDATE() AS DATE)
             ELSE @fecha
           END AS fecha_corte
+        ),
+        VentasFecha AS (
+          SELECT i.id_estacion, i.id_producto, i.venta,
+            ROW_NUMBER() OVER (
+              PARTITION BY i.id_estacion, i.id_producto, CONVERT(DATE, i.fecha)
+              ORDER BY i.id_inventario DESC
+            ) AS rn
+          FROM dbo.Inventarios i
+          CROSS JOIN FechaCorte f
+          WHERE i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
+            AND i.fecha < f.fecha_corte
         )
         SELECT
           e.id_estacion,
@@ -1286,18 +1297,17 @@ app.get('/api/pipas/promedios', async (req, res) => {
           CONVERT(VARCHAR(10), DATEADD(DAY, -1, f.fecha_corte), 23) AS fecha_fin_ventas,
           'INVENTARIOS_7_DIAS' AS fuente,
           CAST(0 AS BIT) AS editable
-        FROM dbo.Estaciones e WITH (NOLOCK)
-        CROSS JOIN dbo.Productos pr WITH (NOLOCK)
+        FROM dbo.Estaciones e
+        CROSS JOIN dbo.Productos pr
         CROSS JOIN FechaCorte f
         OUTER APPLY (
           SELECT
-            SUM(CAST(ISNULL(i.venta, 0) AS DECIMAL(18,3))) AS total_ventas_7_dias,
-            COUNT(DISTINCT CONVERT(DATE, i.fecha)) AS dias_con_dato
-          FROM dbo.Inventarios i WITH (NOLOCK)
-          WHERE i.id_estacion = e.id_estacion
-            AND i.id_producto = pr.id_producto
-            AND i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
-            AND i.fecha < f.fecha_corte
+            SUM(CAST(ISNULL(d.venta, 0) AS DECIMAL(18,3))) AS total_ventas_7_dias,
+            COUNT(*) AS dias_con_dato
+          FROM VentasFecha d
+          WHERE d.id_estacion = e.id_estacion
+            AND d.id_producto = pr.id_producto
+            AND d.rn = 1
         ) ventas
         WHERE e.activa = 1
           AND pr.activo = 1
@@ -1377,12 +1387,31 @@ app.post('/api/pipas/compras', async (req, res) => {
     const fechaCompra = req.body.fecha_compra || req.body.fecha
     const idEstacion = Number(req.body.id_estacion)
     const idProducto = Number(req.body.id_producto)
-    const litrosCompra = numberValue(req.body.litros_compra)
+    const brutoLitros = req.body.litros_compra
+    // Un valor ilegible no debe convertirse en cero y borrar una compra.
+    const litrosValidos = typeof brutoLitros === 'number'
+      ? Number.isFinite(brutoLitros)
+      : typeof brutoLitros === 'string' &&
+        /^(?:\d+(?:[.,]\d+)?|\d{1,3}(?:,\d{3})+(?:\.\d+)?)$/.test(brutoLitros.trim())
+    if (!litrosValidos) {
+      return res.status(400).json({ ok: false, message: 'El campo litros debe ser numérico' })
+    }
+    const litrosCompra = numberValue(brutoLitros)
     const observaciones = String(req.body.observaciones || '').trim()
     const automatica = req.body.automatica === true
-
-    if (automatica && litrosCompra !== 20000) {
-      return res.status(400).json({ ok: false, message: 'La programación automática debe ser de 20,000 litros.' })
+    const fechaValida = /^\d{4}-\d{2}-\d{2}$/.test(String(fechaCompra || '')) &&
+      !Number.isNaN(Date.parse(String(fechaCompra) + 'T12:00:00Z')) &&
+      new Date(String(fechaCompra) + 'T12:00:00Z').toISOString().slice(0, 10) === fechaCompra
+    if (!fechaValida || !Number.isSafeInteger(idEstacion) || idEstacion <= 0 ||
+        !Number.isSafeInteger(idProducto) || idProducto <= 0 ||
+        !(litrosCompra >= 0) || litrosCompra > 1000000 ||
+        observaciones.length > 300) {
+      return res.status(400).json({ ok: false, message: 'Fecha, estación, producto o litros inválidos' })
+    }
+    if (automatica && (litrosCompra !== 20000 || fechaCompra < fechaISO(new Date()))) {
+      return res.status(400).json({
+        ok: false, message: 'La compra automática requiere 20,000 litros y una fecha no vencida'
+      })
     }
 
     if (!fechaCompra) {
@@ -1413,6 +1442,51 @@ app.post('/api/pipas/compras', async (req, res) => {
       })
 
       return
+    }
+
+    // Ruta automática atómica: la lectura de existencia y el INSERT ocurren
+    // en la misma transacción bajo un bloqueo por fecha/estación/producto.
+    if (automatica) {
+      const resultado = await crearRequestPool(p)
+        .input('fecha_compra', sql.Date, fechaCompra)
+        .input('id_estacion', sql.Int, idEstacion)
+        .input('id_producto', sql.Int, idProducto)
+        .input('litros_compra', sql.Decimal(18, 3), litrosCompra)
+        .input('observaciones', sql.NVarChar(300), observaciones)
+        .query(`
+          SET XACT_ABORT ON;
+          BEGIN TRANSACTION;
+          DECLARE @lock INT;
+          DECLARE @recurso NVARCHAR(255) = CONCAT('PIPAS:',
+            CONVERT(VARCHAR(10), @fecha_compra, 23), ':', @id_estacion, ':', @id_producto);
+          EXEC @lock = sp_getapplock @Resource=@recurso, @LockMode='Exclusive',
+            @LockOwner='Transaction', @LockTimeout=10000;
+          IF @lock < 0
+          BEGIN
+            ROLLBACK TRANSACTION;
+            THROW 50001, 'No se pudo bloquear la programación de pipa', 1;
+          END;
+          DECLARE @insertado BIT = 0;
+          IF NOT EXISTS (
+            SELECT 1 FROM dbo.PipasComprasProgramadas WITH (UPDLOCK, HOLDLOCK)
+            WHERE fecha_compra=@fecha_compra AND id_estacion=@id_estacion
+              AND id_producto=@id_producto
+          )
+          BEGIN
+            INSERT INTO dbo.PipasComprasProgramadas
+              (fecha_compra, id_estacion, id_producto, litros_compra, observaciones)
+            VALUES (@fecha_compra, @id_estacion, @id_producto, @litros_compra, @observaciones);
+            SET @insertado = 1;
+          END;
+          COMMIT TRANSACTION;
+          SELECT @insertado AS insertado;
+        `)
+      if (!resultado.recordset?.[0]?.insertado) {
+        return res.status(409).json({
+          ok: false, message: 'Ya existe una compra programada para ese día, estación y combustible.'
+        })
+      }
+      return res.json({ ok: true, message: 'Pipa de 20,000 litros programada' })
     }
 
     const existe = await p.request()

@@ -37,3 +37,34 @@ BEGIN
     ON Inventarios(id_estacion, id_producto, fecha);
 END
 GO
+
+
+-- Integridad opcional de compras programadas. No borra registros históricos.
+-- Ejecutar manualmente tras respaldo y revisión con el administrador SQL.
+IF OBJECT_ID(N'dbo.PipasComprasProgramadas', N'U') IS NOT NULL
+   AND NOT EXISTS (
+      SELECT 1 FROM sys.indexes
+      WHERE object_id = OBJECT_ID(N'dbo.PipasComprasProgramadas')
+        AND name = N'UX_PipasCompras_FechaEstacionProducto'
+   )
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM dbo.PipasComprasProgramadas
+        GROUP BY fecha_compra, id_estacion, id_producto
+        HAVING COUNT(*) > 1
+    )
+    BEGIN
+        PRINT 'ATENCION: existen compras duplicadas. Revisarlas antes de crear el indice; no se modificaron datos.';
+        SELECT fecha_compra, id_estacion, id_producto, COUNT(*) AS registros
+        FROM dbo.PipasComprasProgramadas
+        GROUP BY fecha_compra, id_estacion, id_producto
+        HAVING COUNT(*) > 1;
+    END
+    ELSE
+    BEGIN
+        CREATE UNIQUE INDEX UX_PipasCompras_FechaEstacionProducto
+        ON dbo.PipasComprasProgramadas (fecha_compra, id_estacion, id_producto);
+        PRINT 'Indice unico de compras programadas creado.';
+    END
+END
+GO
