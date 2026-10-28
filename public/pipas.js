@@ -3040,7 +3040,6 @@ async function programarPipaAutomatica() {
       state.fechaBase = hoy
       $('#fechaBase').value = hoy
       aplicarSiguienteSemana()
-      await cargarDatos()
     }
 
     // Recargar inventarios/ventas/compras antes de generar varias compras.
