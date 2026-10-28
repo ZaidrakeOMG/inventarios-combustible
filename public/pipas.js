@@ -291,7 +291,13 @@ function fondajePorcentajeValor(fondaje) {
 }
 
 function capacidadTanqueValor(producto) {
-  return numberValue(producto.capacidad_tanque ?? producto.fondaje)
+  // La capacidad del tanque también es un dato de Polaris. Si el servidor
+  // está desconectado, conservar la capacidad configurada para esa estación.
+  const estacion = estaciones.find(item => item.productos.includes(producto))
+  const capacidadPolaris = estacion ? capacidadTanquePolaris(estacion, producto) : null
+  return capacidadPolaris !== null && capacidadPolaris > 0
+    ? capacidadPolaris
+    : numberValue(producto.capacidad_tanque ?? producto.fondaje)
 }
 
 function fondajeValor(producto) {
@@ -2186,10 +2192,10 @@ function renderParametros(estacion) {
           ${fuenteInventarioInicial(estacion, producto)}
         </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
-        <td class="${valorCero(capacidadTanque) ? 'zero-muted' : ''}">${litros(capacidadTanque)}</td>
-        <td class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
+        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadTanque) ? 'zero-muted' : ''}">${litros(capacidadTanque)}</td>
+        <td data-tanque-param="fondaje" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
         <td class="${valorCero(producto.punto_reorden) ? 'zero-muted' : ''}">${litros(producto.punto_reorden)}</td>
-        <td class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
+        <td data-tanque-param="maxima" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
       </tr>
     `
   }).join('')
@@ -2447,6 +2453,21 @@ function actualizarTanquesPolarisDOM() {
     elemento.textContent = textoTanquePolaris(estacion, producto)
     elemento.title = tituloTanquePolaris(estacion, producto)
     elemento.classList.toggle('sin-lectura', actual === null)
+  })
+
+  document.querySelectorAll('[data-tanque-param]').forEach(elemento => {
+    const estacion = estaciones.find(item => Number(item.id_estacion) === Number(elemento.dataset.estacion))
+    const producto = estacion?.productos.find(item => Number(item.id_producto) === Number(elemento.dataset.producto))
+    if (!producto) return
+    const valores = {
+      capacidad: capacidadTanqueValor(producto),
+      fondaje: fondajeValor(producto),
+      maxima: capacidadMaximaValor(producto)
+    }
+    const valor = valores[elemento.dataset.tanqueParam]
+    if (valor === undefined) return
+    elemento.textContent = litros(valor)
+    elemento.classList.toggle('zero-muted', valorCero(valor))
   })
 }
 
