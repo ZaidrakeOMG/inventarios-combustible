@@ -85,19 +85,19 @@ test('ARY I MAGNA cruza el reorden y propone una sola fecha', () => {
   const m = motor()
   const plan = m.propuestaPipaAutomatica()
   assert.equal(plan.candidatos.length, 1)
-  assert.equal(plan.candidatos[0].fecha, '2026-10-29')
+  assert.equal(plan.candidatos[0].fecha, '2026-10-28')
   assert.equal(plan.candidatos[0].puntoReorden, 20000)
 })
 
 test('detecta pedido tardío y propone uno anterior, sin borrar el existente', () => {
   const m = motor({ compras: [{ fecha: '2026-11-01' }] })
-  assert.equal(m.propuestaPipaAutomatica().candidatos[0]?.fecha, '2026-10-29')
+  assert.equal(m.propuestaPipaAutomatica().candidatos[0]?.fecha, '2026-10-28')
   assert.equal(m.state.compras.length, 1)
   assert.equal(m.state.compras[0].fecha_compra, '2026-11-01')
 })
 
 test('no duplica una pipa pendiente que cubre el reorden', () => {
-  const m = motor({ compras: [{ fecha: '2026-10-29' }] })
+  const m = motor({ compras: [{ fecha: '2026-10-28' }] })
   assert.equal(m.propuestaPipaAutomatica().candidatos.length, 0)
 })
 
@@ -105,7 +105,7 @@ test('una estación de venta alta recibe UNA próxima propuesta, no 14', () => {
   const m = motor({ estacionId: 7, tanque: 54000, capacidad: 101372, venta: 11580 })
   const plan = m.propuestaPipaAutomatica()
   assert.equal(plan.candidatos.length, 1)
-  assert.equal(plan.candidatos[0].fecha, '2026-10-31')
+  assert.equal(plan.candidatos[0].fecha, '2026-10-30')
 })
 
 test('bloquea autoprogramación sin sensor confiable o espacio para la pipa', () => {
