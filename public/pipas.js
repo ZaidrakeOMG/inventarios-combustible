@@ -2317,9 +2317,6 @@ function crearLayout() {
         </div>
       </header>
 
-      <div id="pipasConexiones" class="pipas-conexiones" role="status">Consultando tanques de las estaciones...</div>
-      <div id="polarisAsignaciones" class="polaris-asignaciones"></div>
-      <div id="pipaAutomaticaResultado" class="pipa-auto-info" role="status" hidden></div>
       <main class="station-grid" id="contenedorPipas"></main>
     </div>
     <div id="toast"></div>
@@ -2710,52 +2707,34 @@ function guardarAsignacionPolaris(select) {
   notify(estacionId ? 'Estación vinculada; revisa las lecturas del tanque' : 'Estación desvinculada')
 }
 
+// Diagnósticos internos: los servidores y sus NoES no aparecen en la interfaz de operación.
+let ultimaAdvertenciaPolaris = ''
 function mostrarEstadoConexionesPolaris() {
-  const elemento = $('#pipasConexiones')
-  if (!elemento) return
-  const conectadas = state.polarisEstaciones.length
-  const fallidas = state.polarisErrores.length
-  const sinCoincidencia = estaciones.filter(estacion =>
-    !state.polarisEstaciones.some(row => estacionPolarisCoincide(row, estacion))
-  ).map(estacion => estacion.nombre)
+  const sinRelacion = state.polarisEstaciones.filter(row => !estacionPolarisAsignada(row))
+    .map(row => ({ server: row.server, no_es: row.no_es, nombre_estacion: row.nombre_estacion }))
   const duplicadas = estaciones.filter(estacion =>
     state.polarisEstaciones.filter(row => estacionPolarisCoincide(row, estacion)).length > 1
   ).map(estacion => estacion.nombre)
-  const sinAsignar = state.polarisEstaciones.filter(row => !estacionPolarisAsignada(row))
-    .map(row => (row.server || 'Polaris') + ' (NoES ' + (row.no_es || '?') +
-      ', ' + (row.nombre_estacion || 'sin nombre') + ')')
-  const sinProductoCompatible = state.polarisEstaciones.filter(row => {
-    const destino = estacionPolarisAsignada(row)
-    return destino && !destino.productos.some(producto =>
-      (row.productos || []).some(registro =>
-        productoKey(registro.nombre_producto || '') === productoKey(producto.nombre)))
-  }).map(row =>
-    (row.server || 'Polaris') + ' ofrece productos: ' +
-    (row.productos || []).map(p => (p.nombre_producto || '?') + ' [' + p.no_producto + ']').join(', ')
+  const sensoresNoVigentes = state.polarisEstaciones.flatMap(row =>
+    (row.productos || []).filter(producto => producto.estado_lectura !== 'vigente')
+      .map(producto => ({
+        server: row.server, nombre_estacion: row.nombre_estacion,
+        producto: producto.nombre_producto, estado: producto.estado_lectura
+      }))
   )
-  const antiguas = state.polarisEstaciones.flatMap(estacion =>
-    (estacion.productos || [])
-      .filter(producto => producto.estado_lectura !== 'vigente')
-      .map(producto => estacion.nombre_estacion + ' / ' + producto.nombre_producto + ': ' +
-        nombreEstadoLectura(producto.estado_lectura))
-  )
-  const errores = state.polarisErrores.map(item =>
-    (item.server || 'Polaris') + ': ' + (item.message || 'sin conexión')
-  )
-  const vinculadas = estaciones.length - sinCoincidencia.length
-  const resumen = 'Polaris: ' + conectadas + ' bases respondieron · ' + fallidas +
-    ' errores de conexión · ' + vinculadas + '/' + estaciones.length +
-    ' estaciones identificadas.'
-  const detalles = []
-  if (errores.length) detalles.push('Sin conexión: ' + errores.join('; '))
-  if (sinAsignar.length) detalles.push('Bases sin vincular: ' + sinAsignar.join('; '))
-  if (sinCoincidencia.length) detalles.push('Estaciones pendientes: ' + sinCoincidencia.join(', '))
-  if (duplicadas.length) detalles.push('Identificación duplicada: ' + duplicadas.join(', '))
-  if (sinProductoCompatible.length) detalles.push('Productos sin correspondencia: ' + sinProductoCompatible.join('; '))
-  if (antiguas.length) detalles.push('Lecturas no vigentes: ' + antiguas.join('; '))
-  elemento.textContent = [resumen, ...detalles].join(' ')
-  elemento.classList.toggle('con-alertas', detalles.length > 0)
-  renderAsignacionesPolaris()
+  const advertencias = {
+    conexiones: state.polarisErrores,
+    sinRelacion,
+    duplicadas,
+    sensoresNoVigentes
+  }
+  const firma = JSON.stringify(advertencias)
+  if (firma !== ultimaAdvertenciaPolaris) {
+    ultimaAdvertenciaPolaris = firma
+    if (state.polarisErrores.length || sinRelacion.length || duplicadas.length || sensoresNoVigentes.length) {
+      console.warn('Diagnóstico interno de tanques Polaris:', advertencias)
+    }
+  }
 }
 
 function actualizarTanquesPolarisDOM() {
@@ -2969,12 +2948,17 @@ function propuestaPipaAutomatica() {
       const ventaSeguridad = diasDatos < 7
         ? Math.max(promedio, numeroSql(promedioRegistro.total_ventas_7_dias || 0) / diasDatos)
         : promedio
+      // El punto de reorden CAPTURADO para cada estación/combustible es la referencia
+      // principal. La demanda durante el tiempo de entrega + colchón puede adelantar
+      // el pedido cuando el punto configurado es demasiado bajo para evitar desabasto.
+      const puntoReorden = numberValue(producto.punto_reorden)
+      if (!(puntoReorden > 0) || puntoReorden >= capacidad) {
+        avisos.push(nombre + ': punto de reorden no válido para la capacidad del tanque')
+        continue
+      }
       const maximoSeguro = capacidad * 0.95
-      const reserva = Math.max(
-        numberValue(producto.punto_reorden),
-        ventaSeguridad * PIPA_DIAS_COLCHON,
-        capacidad * 0.05
-      )
+      const reservaLogistica = ventaSeguridad * PIPA_DIAS_COLCHON
+      const nivelProgramacion = Math.max(puntoReorden, reservaLogistica)
 
       for (const fecha of fechas) {
         const entrega = fechaMasDiasISO(fecha, 1)
@@ -2988,8 +2972,10 @@ function propuestaPipaAutomatica() {
         }
         // Si hay pedido en este día, ese volumen ya fue contemplado en la proyección.
         if (compraDia(estacion, producto, fecha) > 0) continue
-        // Aún hay suficiente combustible: no programar una pipa prematuramente.
-        if (cierreEntrega > reserva) continue
+        // Pedir el día ANTERIOR al cruce del punto de reorden estimado.
+        // No esperar a que el tanque llegue a cero. Si la logística requiere
+        // anticiparse más de un día, se debe ajustar la fecha real de recepción.
+        if (cierreEntrega > nivelProgramacion) continue
 
         // Máximo operativo estimado 95 %; no exceder capacidad al recibir.
         // Se valida contra el volumen anterior a la recepción.
@@ -3005,7 +2991,8 @@ function propuestaPipaAutomatica() {
         candidatos.push({
           estacion, producto, fecha, entrega,
           saldoSinCompra: cierreEntrega, volumen, ventaDiaria: ventaSeguridad,
-          reserva, diasRestantes: volumen / ventaSeguridad,
+          puntoReorden, reservaLogistica, nivelProgramacion,
+          diasRestantes: volumen / ventaSeguridad,
           cobertura: cierreEntrega / ventaSeguridad
         })
         break
@@ -3063,9 +3050,9 @@ async function programarPipaAutomatica() {
 
     const vistaPrevia = propuesta.candidatos.map(item =>
       item.estacion.nombre + ' / ' + item.producto.nombre +
-      ' · pedir ' + fechaBonita(item.fecha) +
-      ' · recibir aprox. ' + fechaBonita(item.entrega) +
-      ' · ' + litros(PIPA_AUTOMATICA_LITROS) + ' L'
+      ' · ' + fechaBonita(item.fecha) +
+      ' · ' + litros(PIPA_AUTOMATICA_LITROS) + ' L' +
+      ' · reorden ' + litros(item.puntoReorden) + ' L'
     )
     const confirmar = window.confirm(
       'Se programarán ' + propuesta.candidatos.length +
@@ -3092,7 +3079,8 @@ async function programarPipaAutomatica() {
             id_producto: ids.id_producto,
             litros_compra: PIPA_AUTOMATICA_LITROS,
             automatica: true,
-            observaciones: 'Programación preventiva de 20,000 L con 7 días de ventas, tanque actual y entrega estimada D+1'
+            observaciones: 'Automática: punto reorden ' + Math.round(item.puntoReorden) +
+              ' L, media 7 días y entrega estimada D+1'
           })
         })
         guardadas.push(item)
@@ -3103,24 +3091,18 @@ async function programarPipaAutomatica() {
     }
 
     await cargarDatos()
-    const guardadoTexto = guardadas.map(item =>
-      item.estacion.nombre + ' / ' + item.producto.nombre +
-      ' — 20,000 L, pedir ' + fechaBonita(item.fecha) +
-      ', recibir aprox. ' + fechaBonita(item.entrega) +
-      ', tanque observado: ' + litros(item.volumen) + ' L' +
-      ', venta estimada: ' + litros(item.ventaDiaria) + ' L/día' +
-      ', autonomía sin más entregas: ' + formatoNumero(item.diasRestantes, 1) + ' días' +
-      ', stock sin este pedido al cierre de entrega: ' + litros(item.saldoSinCompra) + ' L'
-    )
-    const resultadoTexto = [
-      'Se guardaron ' + guardadas.length + ' de ' + propuesta.candidatos.length +
-      ' pipas preventivas. Solo registros de compra; NO son pedidos enviados al proveedor.',
-      ...guardadoTexto,
-      ...fallidas.map(m => 'No guardada: ' + m),
-      ...propuesta.avisos.slice(0, 6).map(m => 'Revisar: ' + m)
-    ].join('\n')
-    if (resultado) { resultado.textContent = resultadoTexto; resultado.hidden = false }
-
+    // El detalle de los litros, sensores, puntos de reorden y fechas se
+    // conserva de forma interna; la operación se consulta en la tabla.
+    console.info('Programación preventiva (detalle interno):', {
+      guardadas: guardadas.map(item => ({
+        estacion: item.estacion.nombre, producto: item.producto.nombre,
+        fecha: item.fecha, entrega: item.entrega,
+        litros: PIPA_AUTOMATICA_LITROS, puntoReorden: item.puntoReorden,
+        ventaDiaria: item.ventaDiaria, saldoProyectado: item.saldoSinCompra
+      })),
+      fallidas,
+      advertencias: propuesta.avisos
+    })
     if (guardadas.length) {
       const primera = guardadas[0]
       const ids = obtenerIds(primera.estacion, primera.producto)
@@ -3134,7 +3116,8 @@ async function programarPipaAutomatica() {
         input.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
       }
     }
-    notify('Pipas programadas: ' + guardadas.length + '/' + propuesta.candidatos.length)
+    notify(guardadas.length + ' pipa(s) programada(s)' +
+      (fallidas.length ? '; ' + fallidas.length + ' sin guardar' : ''))
   } catch (error) {
     console.error('ERROR PROGRAMAR PIPAS:', error)
     if (resultado) { resultado.hidden = false; resultado.textContent = error.message || 'No se pudo programar' }
@@ -4408,10 +4391,6 @@ async function exportarPDF() {
 
 function enlazarEventos() {
   $('#btnProgramarPipa').addEventListener('click', programarPipaAutomatica)
-  $('#polarisAsignaciones').addEventListener('change', event => {
-    const select = event.target.closest('select[data-polaris-map]')
-    if (select) guardarAsignacionPolaris(select)
-  })
   $('#btnCargar').addEventListener('click', async () => {
     state.fechaBase = $('#fechaBase').value || fechaHoyISO()
     state.historialSemanas = []
