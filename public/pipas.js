@@ -2014,6 +2014,26 @@ function inyectarEstilos() {
       color: #64748b;
       border-color: #cbd5e1;
     }
+    .reorden-aviso {
+      margin-top: 6px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 10px;
+      line-height: 1.4;
+      font-weight: 700;
+    }
+    .reorden-aviso:empty { display: none; }
+    .proyeccion-fuente {
+      display: block;
+      font-size: 11px;
+      color: #475569;
+      text-align: center;
+      padding: 2px 8px 8px;
+      line-height: 1.5;
+    }
+    .saldo.sin-dato:not(.zero-muted) { background: #f1f5f9; }
 
     .compra-input {
       width: 100%;
@@ -2581,12 +2601,16 @@ function renderProyeccion(estacion) {
       const fechaAplicacionCompra = fechaMasDiasISO(fecha, 1)
       const inventarioDiaAplicacion = inventarioRealDia(estacion, producto, fechaAplicacionCompra)
       const compraSeSumaDiaSiguiente = compra > 0 && compraCuentaEnSaldo(fecha, fechaAplicacionCompra, inventarioDiaAplicacion)
-      const textoCompra = compraSeSumaDiaSiguiente ? 'Compra se suma mañana' : 'Compra no sumada'
+      const textoCompra = compraSeSumaDiaSiguiente ? 'Si llega mañana, se suman' : 'Compra pendiente de validar'
 
       return `
         <td>
           <div class="proj-cell">
-            <div class="saldo ${clase} ${valorCero(saldo) ? 'zero-muted' : ''}">${litros(saldo)}</div>
+            <div class="saldo ${clase} ${valorCero(saldo) ? 'zero-muted' : ''}"
+              data-proyeccion-estacion="${estacion.id_estacion}"
+              data-proyeccion-producto="${producto.id_producto}"
+              data-proyeccion-fecha="${fecha}"
+              title="${escaparHTML(tituloSaldoProyectado(estacion, producto, fecha))}">${litros(saldo)}</div>
             ${renderCompraInput(estacion, producto, fecha)}
             ${compra > 0 ? `<small>${textoCompra}: ${litros(compra)}</small>` : ''}
           </div>
@@ -2596,7 +2620,11 @@ function renderProyeccion(estacion) {
 
     return `
       <tr>
-        <td><span class="producto-chip ${producto.nombre}">${escaparHTML(producto.nombre)}</span></td>
+        <td>
+          <span class="producto-chip ${producto.nombre}">${escaparHTML(producto.nombre)}</span>
+          <div class="reorden-aviso" data-alerta-reorden-estacion="${estacion.id_estacion}"
+            data-alerta-reorden-producto="${producto.id_producto}">${escaparHTML(avisoCompraFueraDeTiempo(estacion, producto))}</div>
+        </td>
         ${celdas}
       </tr>
     `
@@ -2606,9 +2634,10 @@ function renderProyeccion(estacion) {
     <div>
       <div class="projection-header">
         <button class="week-nav" type="button" data-week-nav="-7">◀ Semana anterior</button>
-        <h3 class="table-title">Proyección ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
+        <h3 class="table-title">Proyección al cierre · ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
         <button class="week-nav" type="button" data-week-nav="7">Semana siguiente ▶</button>
       </div>
+      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Desde hoy: tanque físico Polaris vigente y ventas de 7 días. Inventario inicial: corte contable separado. Llegadas D+1 son estimadas, no confirmadas.</small>
       <div class="table-wrap">
         <table class="projection-table">
           <thead>
@@ -2845,6 +2874,33 @@ function mostrarEstadoConexionesPolaris() {
   }
 }
 
+function actualizarProyeccionDOM() {
+  // Actualizar las cifras al cambiar el tanque cada 15 s sin recrear las casillas
+  // de compra, para no interrumpir a quien está capturando.
+  document.querySelectorAll('[data-proyeccion-fecha]').forEach(elemento => {
+    const estacion = estaciones.find(item =>
+      Number(item.id_estacion) === Number(elemento.dataset.proyeccionEstacion))
+    const producto = estacion?.productos.find(item =>
+      Number(item.id_producto) === Number(elemento.dataset.proyeccionProducto))
+    if (!estacion || !producto) return
+    const fecha = elemento.dataset.proyeccionFecha
+    const valor = saldoProyectado(estacion, producto, fecha)
+    elemento.textContent = litros(valor)
+    elemento.title = tituloSaldoProyectado(estacion, producto, fecha)
+    elemento.classList.remove('ok', 'reorden', 'sin-dato')
+    elemento.classList.add(claseEstatus(valor, producto.punto_reorden))
+    elemento.classList.toggle('zero-muted', valorCero(valor))
+  })
+  document.querySelectorAll('[data-alerta-reorden-estacion]').forEach(elemento => {
+    const estacion = estaciones.find(item =>
+      Number(item.id_estacion) === Number(elemento.dataset.alertaReordenEstacion))
+    const producto = estacion?.productos.find(item =>
+      Number(item.id_producto) === Number(elemento.dataset.alertaReordenProducto))
+    if (!producto) return
+    elemento.textContent = avisoCompraFueraDeTiempo(estacion, producto)
+  })
+}
+
 function actualizarTanquesPolarisDOM() {
   document.querySelectorAll('[data-polaris-live-estacion]').forEach(elemento => {
     const idEstacion = Number(elemento.dataset.polarisLiveEstacion || 0)
@@ -2888,6 +2944,7 @@ function actualizarTanquesPolarisDOM() {
     }
     elemento.classList.toggle('capacidad-no-live', !lecturaVigentePolaris(estacion, producto))
   })
+  actualizarProyeccionDOM()
 }
 
 async function refrescarPolarisEnVivo() {
