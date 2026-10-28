@@ -1266,7 +1266,7 @@ app.get('/api/pipas/promedios', async (req, res) => {
       .input('fecha', sql.Date, fecha)
       .query(`
         SET LOCK_TIMEOUT 10000;
-        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
+        SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
         ;WITH FechaCorte AS (
           -- Una proyección futura conserva el último promedio disponible.
           SELECT CASE
@@ -1286,18 +1286,28 @@ app.get('/api/pipas/promedios', async (req, res) => {
           CONVERT(VARCHAR(10), DATEADD(DAY, -1, f.fecha_corte), 23) AS fecha_fin_ventas,
           'INVENTARIOS_7_DIAS' AS fuente,
           CAST(0 AS BIT) AS editable
-        FROM dbo.Estaciones e WITH (NOLOCK)
-        CROSS JOIN dbo.Productos pr WITH (NOLOCK)
+        FROM dbo.Estaciones e
+        CROSS JOIN dbo.Productos pr
         CROSS JOIN FechaCorte f
         OUTER APPLY (
           SELECT
-            SUM(CAST(ISNULL(i.venta, 0) AS DECIMAL(18,3))) AS total_ventas_7_dias,
-            COUNT(DISTINCT CONVERT(DATE, i.fecha)) AS dias_con_dato
-          FROM dbo.Inventarios i WITH (NOLOCK)
-          WHERE i.id_estacion = e.id_estacion
-            AND i.id_producto = pr.id_producto
-            AND i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
-            AND i.fecha < f.fecha_corte
+            SUM(CAST(ISNULL(d.venta, 0) AS DECIMAL(18,3))) AS total_ventas_7_dias,
+            COUNT(*) AS dias_con_dato
+          FROM (
+            -- Un solo cierre capturado por fecha, incluso si existen filas
+            -- duplicadas históricas para una estación y producto.
+            SELECT i.venta,
+              ROW_NUMBER() OVER (
+                PARTITION BY CONVERT(DATE, i.fecha)
+                ORDER BY i.id_inventario DESC
+              ) AS rn
+            FROM dbo.Inventarios i
+            WHERE i.id_estacion = e.id_estacion
+              AND i.id_producto = pr.id_producto
+              AND i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
+              AND i.fecha < f.fecha_corte
+          ) d
+          WHERE d.rn = 1
         ) ventas
         WHERE e.activa = 1
           AND pr.activo = 1
