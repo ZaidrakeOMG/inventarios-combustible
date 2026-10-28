@@ -3225,10 +3225,20 @@ async function programarPipaAutomatica() {
 
     // Confirmación compacta. El detalle técnico se deja en consola y los
     // pedidos se reflejan en las casillas de la tabla, no en un bloque gigante.
+    const agrupadas = new Map()
+    for (const item of propuesta.candidatos) {
+      const nombre = item.estacion.nombre
+      agrupadas.set(nombre, (agrupadas.get(nombre) || 0) + 1)
+    }
+    const resumenEstaciones = [...agrupadas]
+      .map(([nombre, cantidad]) => nombre + ': ' + cantidad + ' pipa(s)')
+      .join('\\n')
     const confirmar = window.confirm(
-      'Se programarán ' + propuesta.candidatos.length +
-      ' pipas de 20,000 L usando el punto de reorden y el consumo de cada estación. ' +
-      'Las fechas son estimadas; no se enviará ningún pedido al proveedor. ¿Guardar?'
+      'Se propone programar ' + propuesta.candidatos.length +
+      ' pipas de 20,000 L (' + litros(propuesta.candidatos.length * PIPA_AUTOMATICA_LITROS) +
+      ' L en total) considerando los puntos de reorden y compras existentes.\\n\\n' +
+      resumenEstaciones +
+      '\\n\\nLa entrega al día siguiente es estimada. NO se enviará ningún pedido al proveedor. ¿Guardar?'
     )
     if (!confirmar) {
       notify('Programación cancelada')
