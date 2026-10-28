@@ -278,6 +278,16 @@ function numberValue(value) {
   return Number.isFinite(n) ? n : 0
 }
 
+// Los decimales serializados desde SQL son números, no separadores de miles.
+// No aplicar esta conversión a campos de entrada editables del usuario.
+function numeroSql(valor) {
+  if (typeof valor === 'string' && /^-?\d+(?:\.\d+)?$/.test(valor.trim())) {
+    const numero = Number(valor.trim())
+    return Number.isFinite(numero) ? numero : 0
+  }
+  return numberValue(valor)
+}
+
 function formatoNumero(n, decimales = 0) {
   return new Intl.NumberFormat('en-US', {
     minimumFractionDigits: decimales,
@@ -623,7 +633,7 @@ function inventarioRealDia(estacion, producto, fecha) {
 
 function promedioVenta(estacion, producto) {
   const row = buscarPromedio(estacion, producto)
-  return row ? numberValue(row.promedio_venta) : 0
+  return row ? numeroSql(row.promedio_venta) : 0
 }
 
 function fuentePromedio(estacion, producto) {
@@ -2362,7 +2372,7 @@ function renderPromedioInput(estacion, producto) {
   const row = buscarPromedio(estacion, producto)
   const valor = promedioVenta(estacion, producto)
   const fechas = row ? `${row.fecha_inicio_ventas || ''} al ${row.fecha_fin_ventas || ''}` : 'Sin período disponible'
-  const detalle = `Ventas de Inventarios Combustibles: ${fechas}. Total: ${litros(row?.total_ventas_7_dias || 0)} L / 7 días. Promedio: ${formatoNumero(valor, 2)} L/día.`
+  const detalle = `Ventas de Inventarios Combustibles: ${fechas}. Total: ${litros(numeroSql(row?.total_ventas_7_dias || 0))} L / 7 días. Promedio: ${formatoNumero(valor, 2)} L/día.`
   return `
     <input class="promedio-input ${valorCero(valor) ? 'zero-muted' : ''}" type="text" readonly value="${litros(valor)}" title="${escaparHTML(detalle)}" aria-label="Promedio automático de los últimos 7 días">
     <div class="source-badge ${claseFuente(estacion, producto)}" title="${escaparHTML(detalle)}">${textoFuente(estacion, producto)}</div>
@@ -2925,7 +2935,7 @@ function propuestaPipaAutomatica() {
       // El promedio mostrado sigue siendo suma de 7 días / 7.
       // Cuando faltan días capturados, usar una demanda conservadora para seguridad.
       const ventaSeguridad = diasDatos < 7
-        ? Math.max(promedio, Number(promedioRegistro.total_ventas_7_dias || 0) / diasDatos)
+        ? Math.max(promedio, numeroSql(promedioRegistro.total_ventas_7_dias || 0) / diasDatos)
         : promedio
       const maximoSeguro = capacidad * 0.95
       const umbral = Math.max(numberValue(producto.punto_reorden), ventaSeguridad * PIPA_DIAS_COLCHON)
