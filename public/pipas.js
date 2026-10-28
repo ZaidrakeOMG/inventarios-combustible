@@ -3162,20 +3162,22 @@ function propuestaPipaAutomatica() {
 
         const cierre = proyeccionDesdePolaris(estacion, producto, fecha, promedio)
         if (!cierre) break
-        if (cierre.saldo > nivelSolicitud) continue
+        const entrega = fechaMasDiasISO(fecha, 1)
+        const cierreEntrega = proyeccionDesdePolaris(estacion, producto, entrega, promedio)
+        if (!cierreEntrega) break
+
+        // Lead time D+1: pedir cuando el cierre DEL DÍA DE LLEGADA
+        // cruzaría el punto de reorden, no esperar al cierre del pedido.
+        // Así se solicita antes de que el producto toque el nivel crítico.
+        if (cierreEntrega.saldo > nivelSolicitud) continue
 
         if (cierre.saldo <= fondaje) {
           avisos.push(nombre + ': riesgo de bajar del fondaje antes de recibir una pipa; verificar disponibilidad urgente')
         }
 
-        // Evitar compras duplicadas en la misma fecha. La compra en D llega
-        // previsiblemente en D+1; no reponer cada cierre para forzar que el
-        // inventario se mantenga permanentemente sobre el punto de reorden.
+        // Un pedido existente para este mismo día ya está considerado en
+        // la proyección de mañana: jamás duplicarlo.
         if (compraDia(estacion, producto, fecha) > 0) break
-
-        const entrega = fechaMasDiasISO(fecha, 1)
-        const cierreEntrega = proyeccionDesdePolaris(estacion, producto, entrega, promedio)
-        if (!cierreEntrega) break
         if (cierre.saldo + PIPA_AUTOMATICA_LITROS > capacidadSegura) {
           avisos.push(nombre + ': una nueva pipa de 20,000 L no cabe en el margen operativo')
           continue
