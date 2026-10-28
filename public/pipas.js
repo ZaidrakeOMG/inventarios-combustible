@@ -990,6 +990,13 @@ function saldoProyectado(estacion, producto, fecha) {
   return modelo ? modelo.saldo : saldoProyectadoInventarios(estacion, producto, fecha)
 }
 
+function claseSaldoEstimado(estacion, producto, fecha, saldo) {
+  // Un cero de un tanque real significa riesgo de desabasto; no "sin dato".
+  if (proyeccionDesdePolaris(estacion, producto, fecha) && saldo <= 0) return 'riesgo-vacio'
+  if (saldo < 0) return 'riesgo-vacio'
+  return claseEstatus(saldo, producto.punto_reorden)
+}
+
 function tituloSaldoProyectado(estacion, producto, fecha) {
   const modelo = proyeccionDesdePolaris(estacion, producto, fecha)
   if (!modelo) {
@@ -2016,6 +2023,12 @@ function inyectarEstilos() {
       color: #64748b;
       border-color: #cbd5e1;
     }
+    .saldo.riesgo-vacio {
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #f87171;
+      box-shadow: 0 0 0 1px #fecaca;
+    }
     .reorden-aviso {
       margin-top: 6px;
       padding: 6px 8px;
@@ -2595,7 +2608,7 @@ function renderProyeccion(estacion) {
   const rows = estacion.productos.map(producto => {
     const celdas = fechas.map(fecha => {
       const saldo = saldoProyectado(estacion, producto, fecha)
-      const clase = claseEstatus(saldo, producto.punto_reorden)
+      const clase = claseSaldoEstimado(estacion, producto, fecha, saldo)
       const compra = compraDia(estacion, producto, fecha)
       const inventarioReal = inventarioRealDia(estacion, producto, fecha)
       const inventarioFicticio = esInventarioFicticio(estacion, producto, fecha)
@@ -2639,7 +2652,7 @@ function renderProyeccion(estacion) {
         <h3 class="table-title">Proyección al cierre · ${fechaBonita(state.fechaInicio)} - ${fechaBonita(state.fechaFin)}</h3>
         <button class="week-nav" type="button" data-week-nav="7">Semana siguiente ▶</button>
       </div>
-      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Desde hoy: tanque físico Polaris vigente y ventas de 7 días. Inventario inicial: corte contable separado. Llegadas D+1 son estimadas, no confirmadas.</small>
+      <small class="proyeccion-fuente" data-fuente-proyeccion-estacion="${estacion.id_estacion}">Inventario inicial: cierre contable anterior. Desde hoy, los cierres se proyectan con Polaris vigente y ventas de 7 días; sin sensor válido, se muestra un respaldo contable. Las compras D+1 son entradas estimadas, NO confirmadas.</small>
       <div class="table-wrap">
         <table class="projection-table">
           <thead>
@@ -2889,8 +2902,8 @@ function actualizarProyeccionDOM() {
     const valor = saldoProyectado(estacion, producto, fecha)
     elemento.textContent = litros(valor)
     elemento.title = tituloSaldoProyectado(estacion, producto, fecha)
-    elemento.classList.remove('ok', 'reorden', 'sin-dato')
-    elemento.classList.add(claseEstatus(valor, producto.punto_reorden))
+    elemento.classList.remove('ok', 'reorden', 'sin-dato', 'riesgo-vacio')
+    elemento.classList.add(claseSaldoEstimado(estacion, producto, fecha, valor))
     elemento.classList.toggle('zero-muted', valorCero(valor))
   })
   document.querySelectorAll('[data-alerta-reorden-estacion]').forEach(elemento => {
