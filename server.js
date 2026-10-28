@@ -1273,6 +1273,17 @@ app.get('/api/pipas/promedios', async (req, res) => {
             WHEN @fecha > CAST(GETDATE() AS DATE) THEN CAST(GETDATE() AS DATE)
             ELSE @fecha
           END AS fecha_corte
+        ),
+        VentasFecha AS (
+          SELECT i.id_estacion, i.id_producto, i.venta,
+            ROW_NUMBER() OVER (
+              PARTITION BY i.id_estacion, i.id_producto, CONVERT(DATE, i.fecha)
+              ORDER BY i.id_inventario DESC
+            ) AS rn
+          FROM dbo.Inventarios i
+          CROSS JOIN FechaCorte f
+          WHERE i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
+            AND i.fecha < f.fecha_corte
         )
         SELECT
           e.id_estacion,
@@ -1293,21 +1304,10 @@ app.get('/api/pipas/promedios', async (req, res) => {
           SELECT
             SUM(CAST(ISNULL(d.venta, 0) AS DECIMAL(18,3))) AS total_ventas_7_dias,
             COUNT(*) AS dias_con_dato
-          FROM (
-            -- Un solo cierre capturado por fecha, incluso si existen filas
-            -- duplicadas históricas para una estación y producto.
-            SELECT i.venta,
-              ROW_NUMBER() OVER (
-                PARTITION BY CONVERT(DATE, i.fecha)
-                ORDER BY i.id_inventario DESC
-              ) AS rn
-            FROM dbo.Inventarios i
-            WHERE i.id_estacion = e.id_estacion
-              AND i.id_producto = pr.id_producto
-              AND i.fecha >= DATEADD(DAY, -7, f.fecha_corte)
-              AND i.fecha < f.fecha_corte
-          ) d
-          WHERE d.rn = 1
+          FROM VentasFecha d
+          WHERE d.id_estacion = e.id_estacion
+            AND d.id_producto = pr.id_producto
+            AND d.rn = 1
         ) ventas
         WHERE e.activa = 1
           AND pr.activo = 1
