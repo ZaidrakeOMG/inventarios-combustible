@@ -3032,6 +3032,14 @@ async function programarPipaAutomatica() {
     // Recargar inventarios/ventas/compras antes de generar varias compras.
     // Así se consideran las programaciones registradas por otros operadores.
     await cargarDatos()
+    // Verificación de última hora: sin confirmar las compras guardadas en SQL
+    // no se permite autoprogramar para no duplicar pedidos de otra sesión.
+    const comprasActuales = await fetchJson(
+      '/api/pipas/compras?fecha_inicio=' + encodeURIComponent(hoy) +
+      '&fecha_fin=' + encodeURIComponent(fechaMasDiasISO(hoy, PIPA_HORIZONTE_DIAS + 1)),
+      { cache: 'no-store' }
+    )
+    state.compras = normalizarRespuestaLista(comprasActuales)
     const respuesta = await cargarPolarisSeguro(true)
     aplicarRespuestaPolaris(respuesta, true)
     actualizarTanquesPolarisDOM()
@@ -3048,17 +3056,12 @@ async function programarPipaAutomatica() {
       return
     }
 
-    const vistaPrevia = propuesta.candidatos.map(item =>
-      item.estacion.nombre + ' / ' + item.producto.nombre +
-      ' · ' + fechaBonita(item.fecha) +
-      ' · ' + litros(PIPA_AUTOMATICA_LITROS) + ' L' +
-      ' · reorden ' + litros(item.puntoReorden) + ' L'
-    )
+    // Confirmación compacta. El detalle técnico se deja en consola y los
+    // pedidos se reflejan en las casillas de la tabla, no en un bloque gigante.
     const confirmar = window.confirm(
       'Se programarán ' + propuesta.candidatos.length +
-      ' pipas preventivas de 20,000 L cada una.\n\n' +
-      vistaPrevia.join('\n') +
-      '\n\nLa recepción D+1 es estimada; no se envían pedidos al proveedor. ¿Guardar?'
+      ' pipas de 20,000 L usando el punto de reorden y el consumo de cada estación. ' +
+      'Las fechas son estimadas; no se enviará ningún pedido al proveedor. ¿Guardar?'
     )
     if (!confirmar) {
       notify('Programación cancelada')
