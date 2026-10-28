@@ -1348,6 +1348,14 @@ function inyectarEstilos() {
       font-weight: 750;
     }
     .pipa-auto-info[hidden] { display: none !important; }
+    td[data-tanque-param="capacidad"]::after {
+      content: attr(data-fuente);
+      display: block;
+      margin-top: 4px;
+      font-size: 9px;
+      letter-spacing: .06em;
+      font-weight: 800;
+    }
     .capacidad-no-live {
       background: #fff7ed !important;
       color: #9a3412 !important;
@@ -2222,7 +2230,7 @@ function renderParametros(estacion) {
           ${fuenteInventarioInicial(estacion, producto)}
         </td>
         <td>${renderPromedioInput(estacion, producto)}</td>
-        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${capacidadTanquePolaris(estacion, producto) > 0 ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
+        <td data-tanque-param="capacidad" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" title="${escaparHTML(tituloCapacidadTanque(estacion, producto))}" data-fuente="${capacidadTanquePolaris(estacion, producto) > 0 ? 'POLARIS EN VIVO' : 'RESPALDO'}" class="${valorCero(capacidadTanque) ? 'zero-muted' : '' } ${capacidadTanquePolaris(estacion, producto) > 0 ? '' : 'capacidad-no-live'}">${litros(capacidadTanque)}</td>
         <td data-tanque-param="fondaje" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(fondaje) ? 'zero-muted' : ''}">${litros(fondaje)}</td>
         <td class="${valorCero(producto.punto_reorden) ? 'zero-muted' : ''}">${litros(producto.punto_reorden)}</td>
         <td data-tanque-param="maxima" data-estacion="${estacion.id_estacion}" data-producto="${producto.id_producto}" class="${valorCero(capacidadMaxima) ? 'zero-muted' : ''}">${litros(capacidadMaxima)}</td>
@@ -2456,6 +2464,9 @@ function actualizarTanquesPolarisDOM() {
     elemento.textContent = litros(valor)
     elemento.classList.toggle('zero-muted', valorCero(valor))
     elemento.title = tituloCapacidadTanque(estacion, producto)
+    if (elemento.dataset.tanqueParam === 'capacidad') {
+      elemento.dataset.fuente = capacidadTanquePolaris(estacion, producto) > 0 ? 'POLARIS EN VIVO' : 'RESPALDO'
+    }
     elemento.classList.toggle('capacidad-no-live', !(capacidadTanquePolaris(estacion, producto) > 0))
   })
 }
