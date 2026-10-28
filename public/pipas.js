@@ -439,14 +439,27 @@ function tituloTanquePolaris(estacion, producto) {
   ].filter(Boolean).join(' · ')
 }
 
+function textoFechaTanquePolaris(estacion, producto) {
+  const lectura = buscarProductoPolaris(estacion, producto)
+  if (!lectura) return 'Sin fecha de sensor'
+  const fecha = fechaHoraBrevePolaris(lectura.fecha_tanque)
+  const edad = lectura.edad_minutos === null || lectura.edad_minutos === undefined
+    ? '' : ' · hace ' + Math.max(0, Number(lectura.edad_minutos)) + ' min'
+  return fecha ? fecha + edad : 'Sin fecha de sensor'
+}
+
 function renderTanquePolaris(estacion, producto) {
   const estado = estadoLecturaPolaris(estacion, producto)
   const clase = estado === 'vigente' ? '' : (estado === 'sin_lectura' || estado === 'duplicada' ? ' sin-lectura' : ' no-vigente')
-  return '<span class="tanque-live' + clase + '"' +
-    ' data-polaris-live-estacion="' + estacion.id_estacion + '"' +
-    ' data-polaris-live-producto="' + escaparHTML(productoKey(producto.nombre)) + '"' +
+  const id = estacion.id_estacion
+  const clave = escaparHTML(productoKey(producto.nombre))
+  return '<div class="tanque-lectura"><span class="tanque-live' + clase + '"' +
+    ' data-polaris-live-estacion="' + id + '"' +
+    ' data-polaris-live-producto="' + clave + '"' +
     ' title="' + escaparHTML(tituloTanquePolaris(estacion, producto)) + '">' +
-    escaparHTML(textoTanquePolaris(estacion, producto)) + '</span>'
+    escaparHTML(textoTanquePolaris(estacion, producto)) + '</span>' +
+    '<small data-polaris-fecha-estacion="' + id + '" data-polaris-fecha-producto="' + clave + '">' +
+    escaparHTML(textoFechaTanquePolaris(estacion, producto)) + '</small></div>'
 }
 
 function tituloCapacidadTanque(estacion, producto) {
@@ -1600,6 +1613,17 @@ function inyectarEstilos() {
       background: linear-gradient(135deg, #111827, #475569);
     }
 
+    .tanque-lectura {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
+    }
+    .tanque-lectura small {
+      font-size: 10px;
+      color: #475569;
+      white-space: nowrap;
+    }
     .tanque-live {
       display: inline-flex;
       align-items: center;
@@ -2297,7 +2321,7 @@ function renderParametros(estacion) {
           <thead>
             <tr>
               <th>PARÁMETROS</th>
-              <th>Tanque<br>ahora<br><small>EN VIVO</small></th>
+              <th>Tanque<br>Polaris<br><small>con fecha de lectura</small></th>
               <th>Inventario<br>Inicial<br><small>${fechaBonita(state.fechaBase)}</small></th>
               <th>Promedio<br>de venta<br><small>7 días</small></th>
               <th>Capacidad<br>de tanque</th>
@@ -2533,6 +2557,13 @@ function actualizarTanquesPolarisDOM() {
     const estado = estadoLecturaPolaris(estacion, producto)
     elemento.classList.toggle('sin-lectura', actual === null || estado === 'duplicada')
     elemento.classList.toggle('no-vigente', actual !== null && estado !== 'vigente' && estado !== 'duplicada')
+  })
+
+  document.querySelectorAll('[data-polaris-fecha-estacion]').forEach(elemento => {
+    const estacion = estaciones.find(item => Number(item.id_estacion) === Number(elemento.dataset.polarisFechaEstacion))
+    const producto = estacion?.productos.find(item =>
+      productoKey(item.nombre) === productoKey(elemento.dataset.polarisFechaProducto))
+    if (producto) elemento.textContent = textoFechaTanquePolaris(estacion, producto)
   })
 
   document.querySelectorAll('[data-tanque-param]').forEach(elemento => {
