@@ -3107,7 +3107,10 @@ async function programarPipaAutomatica() {
       item.estacion.nombre + ' / ' + item.producto.nombre +
       ' — 20,000 L, pedir ' + fechaBonita(item.fecha) +
       ', recibir aprox. ' + fechaBonita(item.entrega) +
-      ', stock sin nuevo pedido al cierre de entrega: ' + litros(item.saldoSinCompra) + ' L'
+      ', tanque observado: ' + litros(item.volumen) + ' L' +
+      ', venta estimada: ' + litros(item.ventaDiaria) + ' L/día' +
+      ', autonomía sin más entregas: ' + formatoNumero(item.diasRestantes, 1) + ' días' +
+      ', stock sin este pedido al cierre de entrega: ' + litros(item.saldoSinCompra) + ' L'
     )
     const resultadoTexto = [
       'Se guardaron ' + guardadas.length + ' de ' + propuesta.candidatos.length +
