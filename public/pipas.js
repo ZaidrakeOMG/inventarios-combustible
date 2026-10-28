@@ -952,7 +952,7 @@ function fraccionRestanteDeHoyPolaris(lectura) {
   return Math.max(0, Math.min(1, (1440 - minutosDesdeMedianoche) / 1440))
 }
 
-function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional = null, comprasAdicionales = null) {
+function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional = null, comprasAdicionales = null, sinCompras = false) {
   const hoy = fechaHoyISO()
   if (fechaObjetivo < hoy || !lecturaVigentePolaris(estacion, producto)) return null
   const lectura = buscarProductoPolaris(estacion, producto)
@@ -968,7 +968,7 @@ function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional
   for (const fechaActual of fechas) {
     // Compra programada el día D: ingreso SUPUESTO al comienzo de D+1.
     // Nunca sumar compras pasadas al nivel físico, pues Polaris ya las refleja.
-    if (fechaActual > hoy) {
+    if (fechaActual > hoy && !sinCompras) {
       const fechaCompra = fechaMasDiasISO(fechaActual, -1)
       saldo += compraDia(estacion, producto, fechaCompra) +
         (comprasAdicionales ? Number(comprasAdicionales.get(fechaCompra) || 0) : 0)
@@ -983,6 +983,13 @@ function proyeccionDesdePolaris(estacion, producto, fechaObjetivo, ventaOpcional
     fechaMedicion: String(lectura.fecha_tanque || ''),
     fuente: 'POLARIS_PROYECTADO'
   }
+}
+
+function dependeDeEntregasPrevistas(estacion, producto, fecha) {
+  const con = proyeccionDesdePolaris(estacion, producto, fecha)
+  const sin = proyeccionDesdePolaris(estacion, producto, fecha, null, null, true)
+  if (!con || !sin || con.saldo - sin.saldo < 0.5) return null
+  return { con: con.saldo, sin: sin.saldo }
 }
 
 function saldoProyectado(estacion, producto, fecha) {
@@ -2029,6 +2036,18 @@ function inyectarEstilos() {
       border-color: #f87171;
       box-shadow: 0 0 0 1px #fecaca;
     }
+    .saldo.condicional {
+      border-style: dashed;
+      border-color: #d97706;
+    }
+    .llegada-condicional {
+      color: #92400e;
+      font-size: 10px;
+      line-height: 1.4;
+      font-weight: 700;
+      display: block;
+    }
+    .llegada-condicional:empty { display: none; }
     .reorden-aviso {
       margin-top: 6px;
       padding: 6px 8px;
@@ -2608,6 +2627,7 @@ function renderProyeccion(estacion) {
   const rows = estacion.productos.map(producto => {
     const celdas = fechas.map(fecha => {
       const saldo = saldoProyectado(estacion, producto, fecha)
+      const condicionado = dependeDeEntregasPrevistas(estacion, producto, fecha)
       const clase = claseSaldoEstimado(estacion, producto, fecha, saldo)
       const compra = compraDia(estacion, producto, fecha)
       const inventarioReal = inventarioRealDia(estacion, producto, fecha)
@@ -2629,11 +2649,16 @@ function renderProyeccion(estacion) {
       return `
         <td>
           <div class="proj-cell">
-            <div class="saldo ${clase} ${valorCero(saldo) ? 'zero-muted' : ''}"
+            <div class="saldo ${clase} ${condicionado ? 'condicional' : ''} ${valorCero(saldo) ? 'zero-muted' : ''}"
               data-proyeccion-estacion="${estacion.id_estacion}"
               data-proyeccion-producto="${producto.id_producto}"
               data-proyeccion-fecha="${fecha}"
               title="${escaparHTML(tituloSaldoProyectado(estacion, producto, fecha))}">${litros(saldo)}</div>
+            <small class="llegada-condicional"
+              data-entrega-estacion="${estacion.id_estacion}"
+              data-entrega-producto="${producto.id_producto}"
+              data-entrega-fecha="${fecha}"
+              title="${condicionado ? 'Sin entregas programadas: ' + litros(condicionado.sin) + ' L' : ''}">${condicionado ? 'Sujeto a entrega' : ''}</small>
             ${renderCompraInput(estacion, producto, fecha)}
             ${compra > 0 ? `<small>${esCompraAutomatica ? 'Automática · ' : ''}${textoCompra}: ${litros(compra)}</small>` : ''}
           </div>
@@ -2913,6 +2938,17 @@ function actualizarProyeccionDOM() {
     elemento.classList.remove('ok', 'reorden', 'sin-dato', 'riesgo-vacio')
     elemento.classList.add(claseSaldoEstimado(estacion, producto, fecha, valor))
     elemento.classList.toggle('zero-muted', valorCero(valor))
+    elemento.classList.toggle('condicional', !!dependeDeEntregasPrevistas(estacion, producto, fecha))
+  })
+  document.querySelectorAll('[data-entrega-fecha]').forEach(elemento => {
+    const estacion = estaciones.find(item =>
+      Number(item.id_estacion) === Number(elemento.dataset.entregaEstacion))
+    const producto = estacion?.productos.find(item =>
+      Number(item.id_producto) === Number(elemento.dataset.entregaProducto))
+    if (!producto) return
+    const escenario = dependeDeEntregasPrevistas(estacion, producto, elemento.dataset.entregaFecha)
+    elemento.textContent = escenario ? 'Sujeto a entrega' : ''
+    elemento.title = escenario ? 'Sin entregas programadas: ' + litros(escenario.sin) + ' L' : ''
   })
   document.querySelectorAll('[data-alerta-reorden-estacion]').forEach(elemento => {
     const estacion = estaciones.find(item =>
