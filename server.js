@@ -1377,6 +1377,11 @@ app.post('/api/pipas/compras', async (req, res) => {
     const idProducto = Number(req.body.id_producto)
     const litrosCompra = numberValue(req.body.litros_compra)
     const observaciones = String(req.body.observaciones || '').trim()
+    const automatica = req.body.automatica === true
+
+    if (automatica && litrosCompra !== 20000) {
+      return res.status(400).json({ ok: false, message: 'La programación automática debe ser de 20,000 litros.' })
+    }
 
     if (!fechaCompra) {
       throw new Error('No se recibió la fecha de compra')
@@ -1419,6 +1424,10 @@ app.post('/api/pipas/compras', async (req, res) => {
           AND id_estacion = @id_estacion
           AND id_producto = @id_producto
       `)
+
+    if (existe.recordset.length > 0 && automatica) {
+      return res.status(409).json({ ok: false, message: 'Ya hay una compra en esa fecha, estación y producto. No se sobrescribió.' })
+    }
 
     if (existe.recordset.length > 0) {
       await p.request()
