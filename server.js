@@ -424,21 +424,34 @@ app.get('/api/health-sql', async (req, res) => {
 })
 
 
+// Lecturas de Polaris: una medición por tanque físico y fecha real de sensor.
+// Solo datos de tanques; ventas e inventario inicial se consultan a Inventarios Combustibles.
+const POLARIS_MAX_EDAD_MINUTOS = Math.max(1, Number.parseInt(process.env.POLARIS_MAX_EDAD_MINUTOS, 10) || 20)
+const polarisIdTanquePorServidor = new Map()
+
+async function identificarColumnaTanque(pool, server) {
+  if (polarisIdTanquePorServidor.has(server)) return polarisIdTanquePorServidor.get(server)
+
+  const columnas = await crearRequestPool(pool).query(`
+    SELECT name FROM sys.columns WHERE object_id = OBJECT_ID(N'dbo.Tanques')
+  `)
+  const nombres = new Map(columnas.recordset.map(row => [String(row.name).toLowerCase(), row.name]))
+  const candidatos = ['NoTanque', 'NumeroTanque', 'NumTanque', 'IdTanque', 'IDTanque']
+  const identificador = candidatos.map(campo => nombres.get(campo.toLowerCase())).find(Boolean) || null
+  polarisIdTanquePorServidor.set(server, identificador)
+  return identificador
+}
+
 app.get('/api/pipas/polaris/estado', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate')
   const fechaSolicitada = String(req.query.fecha || '').trim()
   const fechaObjetivo = /^\d{4}-\d{2}-\d{2}$/.test(fechaSolicitada)
     ? fechaSolicitada
     : fechaISO(new Date())
-  const soloActual = ['1', 'true', 'yes', 'si', 'sí'].includes(
-    String(req.query.solo_actual || '').toLowerCase()
-  )
 
   async function consultarServidorPolaris(server) {
-    const p = await getRemotePool(server, POLARIS_DATABASE)
-
-    const metaResult = await crearRequestPool(p).query(`
-      SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
+    const pool = await getRemotePool(server, POLARIS_DATABASE)
+    const metaResult = await crearRequestPool(pool).query(`
       SELECT TOP (1)
         NoES AS no_es,
         Estacion AS nombre_estacion,
@@ -449,56 +462,84 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
       FROM dbo.Estaciones WITH (NOLOCK)
       ORDER BY NoES;
     `)
-
-    if (!metaResult.recordset.length) {
-      throw new Error('No se encontró la estación en Polaris')
-    }
+    if (!metaResult.recordset.length) throw new Error('No se encontró la estación en Polaris')
 
     const meta = metaResult.recordset[0]
     const noEs = Number(meta.no_es)
-
-    if (!Number.isFinite(noEs) || noEs <= 0) {
+    if (!Number.isSafeInteger(noEs) || noEs <= 0) {
       throw new Error('Polaris devolvió un NoES inválido')
     }
 
-    const actualesResult = await crearRequestPool(p)
+    // Si Polaris guarda históricos en Tanques, no SUMAR todos los históricos.
+    // ROW_NUMBER selecciona la última lectura por número de tanque físico.
+    // No suponer identificadores inexistentes; se consulta el esquema real.
+    const columnaTanque = await identificarColumnaTanque(pool, server)
+    const columnaEscapada = columnaTanque ? '[' + columnaTanque.replace(/]/g, ']]') + ']' : null
+    const fila = columnaEscapada
+      ? 'ROW_NUMBER() OVER (PARTITION BY t.NoES, t.' + columnaEscapada + ' ORDER BY t.FechaHora DESC) AS fila'
+      : 'CAST(1 AS INT) AS fila'
+
+    const actuales = await crearRequestPool(pool)
       .input('no_es', sql.Int, noEs)
       .query(`
-        SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED;
-
+        ;WITH Lecturas AS (
+          SELECT t.NoES, t.NoProducto, t.Volumen, t.CapacidadTotal, t.FechaHora,
+            ${fila}
+          FROM dbo.Tanques t WITH (NOLOCK)
+          WHERE t.NoES = @no_es
+        ),
+        UltimosTanques AS (
+          SELECT * FROM Lecturas WHERE fila = 1
+        )
         SELECT
           t.NoProducto AS no_producto,
           p.Producto AS nombre_producto,
           CAST(SUM(CAST(ISNULL(t.Volumen, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS tanque_actual,
           CAST(SUM(CAST(ISNULL(t.CapacidadTotal, 0) AS DECIMAL(18,3))) AS DECIMAL(18,3)) AS capacidad_tanque,
           COUNT(*) AS numero_tanques,
-          CONVERT(VARCHAR(19), MAX(t.FechaHora), 120) AS fecha_tanque
-        FROM dbo.Tanques t WITH (NOLOCK)
-        -- Una fila por producto en el catálogo: impedir que un JOIN
-        -- con códigos duplicados infle litros y capacidad del tanque.
+          COUNT(t.Volumen) AS tanques_con_volumen,
+          CONVERT(VARCHAR(19), MAX(t.FechaHora), 120) AS fecha_tanque,
+          CONVERT(VARCHAR(19), MIN(t.FechaHora), 120) AS fecha_tanque_mas_antigua,
+          DATEDIFF(MINUTE, MIN(t.FechaHora), GETDATE()) AS edad_minutos
+        FROM UltimosTanques t
         OUTER APPLY (
           SELECT TOP (1) prod.Producto
           FROM dbo.Productos prod WITH (NOLOCK)
           WHERE prod.NoProducto = t.NoProducto AND prod.TipoProducto = 'C'
           ORDER BY prod.Producto
         ) p
-        WHERE t.NoES = @no_es AND p.Producto IS NOT NULL
-        GROUP BY
-          t.NoProducto,
-          p.Producto
+        WHERE p.Producto IS NOT NULL
+        GROUP BY t.NoProducto, p.Producto
         ORDER BY t.NoProducto;
       `)
 
-    // Polaris solamente aporta información de tanques en vivo.
-    // Inventario inicial y ventas vienen de Inventarios Combustibles.
-    const productos = actualesResult.recordset.map(row => ({
-      no_producto: Number(row.no_producto),
-      nombre_producto: row.nombre_producto,
-      tanque_actual: row.tanque_actual === null ? null : Number(row.tanque_actual),
-      capacidad_tanque: row.capacidad_tanque === null ? null : Number(row.capacidad_tanque),
-      numero_tanques: Number(row.numero_tanques || 0),
-      fecha_tanque: row.fecha_tanque || null
-    }))
+    const productos = actuales.recordset.map(row => {
+      const edad = row.edad_minutos === null ? null : Number(row.edad_minutos)
+      const volumen = row.tanque_actual === null ? null : Number(row.tanque_actual)
+      const capacidad = row.capacidad_tanque === null ? null : Number(row.capacidad_tanque)
+      const totalTanques = Number(row.numero_tanques || 0)
+      const sensorValido = Number(row.tanques_con_volumen) === totalTanques &&
+        totalTanques > 0 && Number.isFinite(volumen) && Number.isFinite(capacidad) &&
+        volumen >= 0 && capacidad > 0 && volumen <= capacidad * 1.01
+      const fechaValida = Number.isFinite(edad) && edad >= -5 && edad <= POLARIS_MAX_EDAD_MINUTOS
+      let estado = 'vigente'
+      if (!columnaTanque) estado = 'no_verificada'
+      else if (!sensorValido) estado = 'inconsistente'
+      else if (!fechaValida) estado = 'desactualizada'
+
+      return {
+        no_producto: Number(row.no_producto),
+        nombre_producto: row.nombre_producto,
+        tanque_actual: volumen,
+        capacidad_tanque: capacidad,
+        numero_tanques: totalTanques,
+        fecha_tanque: row.fecha_tanque || null,
+        fecha_tanque_mas_antigua: row.fecha_tanque_mas_antigua || null,
+        edad_minutos: Number.isFinite(edad) ? edad : null,
+        estado_lectura: estado,
+        deduplicado_por: columnaTanque || null
+      }
+    })
 
     return {
       server,
@@ -513,39 +554,25 @@ app.get('/api/pipas/polaris/estado', async (req, res) => {
     }
   }
 
-  const resultados = await Promise.all(
-    SQL_SERVERS.map(async server => {
-      try {
-        return {
-          ok: true,
-          station: await consultarServidorPolaris(server)
-        }
-      } catch (error) {
-        return {
-          ok: false,
-          server,
-          message: error.message
-        }
-      }
-    })
-  )
+  const resultados = await Promise.all(SQL_SERVERS.map(async server => {
+    try {
+      return { ok: true, station: await consultarServidorPolaris(server) }
+    } catch (error) {
+      return { ok: false, server, message: error.message }
+    }
+  }))
 
-  const stations = resultados
-    .filter(item => item.ok && item.station)
-    .map(item => item.station)
-
-  const errors = resultados
-    .filter(item => !item.ok)
-    .map(item => ({
-      server: item.server,
-      message: item.message
-    }))
+  const stations = resultados.filter(item => item.ok).map(item => item.station)
+  const errors = resultados.filter(item => !item.ok)
+    .map(item => ({ server: item.server, message: item.message }))
 
   res.json({
     ok: stations.length > 0,
     fecha: fechaObjetivo,
     database: POLARIS_DATABASE,
-    solo_actual: soloActual,
+    consulta_en: new Date().toISOString(),
+    max_edad_minutos: POLARIS_MAX_EDAD_MINUTOS,
+    servidores_consultados: SQL_SERVERS.length,
     stations,
     errors
   })
